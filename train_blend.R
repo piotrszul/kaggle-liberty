@@ -99,14 +99,14 @@ trControl <- trainControl(method="cv",
 #                         allowParallel = FALSE)
 
 model_specs <- list(
-    rf5=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=5), ntree=50),
-    rf10=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=10), ntree=50),        
-    rf20=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=20), ntree=50),
-    rf21=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=20), ntree=51),    
+#    rf5=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=5), ntree=50),
+#    rf10=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=10), ntree=50),        
+#    rf20=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=20), ntree=50),
+#    rf21=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=20), ntree=51),    
     rf31=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=30), ntree=100),        
-    gamSpline10=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=10)),
-    gamSpline20=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=20)),
-    gamSpline30=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=30)),      
+#    gamSpline10=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=10)),
+#    gamSpline20=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=20)),
+#    gamSpline30=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=30)),      
     gamSpline31=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=31)),          
     gamSpline50=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=50)),              
 #    lasso0.9=caretModelSpec(method='lasso', tuneGrid = data.frame(fraction=0.9)),      
@@ -120,12 +120,7 @@ model_specs <- list(
     xgbTree=caretModelSpec(method='xgbTree', tuneGrid = data.frame(nrounds = 1000, max_depth = 10, eta=0.001)),
     xgbTree=caretModelSpec(method='xgbTree', tuneGrid = data.frame(nrounds = 1000, max_depth = 10, eta=0.005)),
     xgbTree=caretModelSpec(method='xgbTree', tuneGrid = data.frame(nrounds = 1000, max_depth = 15, eta=0.005))
-
-
-
-
-
-    #    krlsPoly2_01=caretModelSpec(method='krlsPoly', tuneGrid = data.frame(degree=2,lambda=0.01)),        
+#    krlsPoly2_01=caretModelSpec(method='krlsPoly', tuneGrid = data.frame(degree=2,lambda=0.01)),        
 #    krlsPoly2_001=caretModelSpec(method='krlsPoly', tuneGrid = data.frame(degree=2,lambda=0.001)),        
 #    krlsPoly3_01=caretModelSpec(method='krlsPoly', tuneGrid = data.frame(degree=3,lambda=0.01)),        
 #    krlsPoly3_001=caretModelSpec(method='krlsPoly', tuneGrid = data.frame(degree=3,lambda=0.001))           
@@ -153,5 +148,5 @@ evalEnsemble(greedy_ensemble, NormalizedGini)
 #stopCluster(cl)
 test_pred <-predict(greedy_ensemble,newdata=x_test)
 result <- data.frame(Id=test_data$Id, Hazard=test_pred)
-write.csv(result, "submission.csv", row.names=FALSE, quote=FALSE)
+write.csv(result, file.path('output','submission.csv', row.names=FALSE, quote=FALSE)
 
