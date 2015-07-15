@@ -3,16 +3,9 @@ library(caretEnsemble)
 library(lattice)
 library(mlbench)
 library(doParallel)
-#cl <- makeCluster(2)
-#registerDoParallel(cl)
 
 getModelName<-function(modelSpec) {
     paste(unlist(modelSpec), sep='_', collapse="_")
-}
-
-train <-function(...) {
-    print("MyTrain")
-    caret::train(...)
 }
 
 #"NormalizedGini" is the other half of the metric. This function does most of the work, though
@@ -109,6 +102,8 @@ model_specs <- list(
 #    gamSpline30=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=30)),      
     gamSpline31=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=31)),          
     gamSpline50=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=50)),              
+    gamSpline100=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=100)),              
+
 #    lasso0.9=caretModelSpec(method='lasso', tuneGrid = data.frame(fraction=0.9)),      
 #    lasso0.91=caretModelSpec(method='lasso', tuneGrid = data.frame(fraction=0.91)),      
 #    lasso0.5=caretModelSpec(method='lasso', tuneGrid = data.frame(fraction=0.5)),      
@@ -132,6 +127,9 @@ x_train = predict(dummies, newdata = train_set[,-1])
 x_test = predict(dummies, newdata = test_data[,-1])
 
 
+cl <- makeCluster(2, outfile="")
+registerDoParallel(cl)
+
 model_list <- caretList(x_train,
     y,
     trControl=trControl,
@@ -139,13 +137,15 @@ model_list <- caretList(x_train,
     tuneList=model_specs
 )
 
+stopCluster(cl)
+
+
 xyplot(resamples(model_list))
 modelCor(resamples(model_list))
 
 greedy_ensemble <- caretEnsemble(model_list, optFUN=greedOptGini)
 summary(greedy_ensemble)
 evalEnsemble(greedy_ensemble, NormalizedGini)
-#stopCluster(cl)
 test_pred <-predict(greedy_ensemble,newdata=x_test)
 result <- data.frame(Id=test_data$Id, Hazard=test_pred)
 write.csv(result, file.path('output','submission.csv'), row.names=FALSE, quote=FALSE)
