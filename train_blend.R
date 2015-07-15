@@ -148,5 +148,5 @@ evalEnsemble(greedy_ensemble, NormalizedGini)
 #stopCluster(cl)
 test_pred <-predict(greedy_ensemble,newdata=x_test)
 result <- data.frame(Id=test_data$Id, Hazard=test_pred)
-write.csv(result, file.path('output','submission.csv', row.names=FALSE, quote=FALSE)
+write.csv(result, file.path('output','submission.csv'), row.names=FALSE, quote=FALSE)
 
