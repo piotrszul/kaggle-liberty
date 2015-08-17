@@ -1,0 +1,1420 @@
+
+R version 3.1.3 (2015-03-09) -- "Smooth Sidewalk"
+Copyright (C) 2015 The R Foundation for Statistical Computing
+Platform: x86_64-unknown-linux-gnu (64-bit)
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+  Natural language support but running in an English locale
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+> library(caret)
+Loading required package: lattice
+Loading required package: ggplot2
+> library(caretEnsemble)
+> library(lattice)
+> library(mlbench)
+> library(doParallel)
+Loading required package: foreach
+Loading required package: iterators
+Loading required package: parallel
+> 
+> getModelName<-function(modelSpec) {
++     paste(unlist(modelSpec), sep='_', collapse="_")
++ }
+> 
+> #"NormalizedGini" is the other half of the metric. This function does most of the work, though
+> SumModelGini <- function(solution, submission) {
++     df = data.frame(solution = solution, submission = submission)
++     df <- df[order(df$submission, decreasing = TRUE),]
++     df
++     df$random = (1:nrow(df))/nrow(df)
++     df
++     totalPos <- sum(df$solution)
++     df$cumPosFound <- cumsum(df$solution) # this will store the cumulative number of positive examples found (used for computing "Model Lorentz")
++     df$Lorentz <- df$cumPosFound / totalPos # this will store the cumulative proportion of positive examples found ("Model Lorentz")
++     df$Gini <- df$Lorentz - df$random # will store Lorentz minus random
++     #print(df)
++     return(sum(df$Gini))
++ }
+> 
+> NormalizedGini <- function(solution, submission) {
++     SumModelGini(solution, submission) / SumModelGini(solution, solution)
++ }
+> 
+> greedOptGini <- function(X, Y, iter = 100L){
++     
++     N           <- ncol(X)
++     weights     <- rep(0L, N)
++     pred        <- 0 * X
++     sum.weights <- 0L
++     
++     while(sum.weights < iter) {
++         
++         sum.weights   <- sum.weights + 1L
++         pred          <- (pred + X) * (1L / sum.weights)
++         errors        <- apply(pred, MARGIN=2,function(x) {NormalizedGini(Y,x)})
++         best          <- which.max(errors)
++         weights[best] <- weights[best] + 1L
++         pred          <- pred[, best] * sum.weights
++     }
++     return(weights)
++ }
+> 
+> printf <- function(...) invisible(print(sprintf(...)))
+> 
+> train_data<- read.csv('data/train.csv', header=TRUE)
+> test_data <- read.csv('data/test.csv', header=TRUE)
+> #train_set <- subset(train_data,select=-c(Id,T1_V4,T1_V5,T1_V15,T1_V16, T1_V11))
+> trainIdx <-createDataPartition(train_data$Hazard, p=0.01, list=FALSE)
+> 
+> train_set <- subset(train_data,select=-c(Id))
+> 
+> set.seed(37)
+> 
+> giniSummary <-function (data, lev = NULL, model = NULL) {
++ 
++     SumModelGini <- function(solution, submission) {
++         df = data.frame(solution = solution, submission = submission)
++         df <- df[order(df$submission, decreasing = TRUE),]
++         df
++         df$random = (1:nrow(df))/nrow(df)
++         df
++         totalPos <- sum(df$solution)
++         df$cumPosFound <- cumsum(df$solution) # this will store the cumulative number of positive examples found (used for computing "Model Lorentz")
++         df$Lorentz <- df$cumPosFound / totalPos # this will store the cumulative proportion of positive examples found ("Model Lorentz")
++         df$Gini <- df$Lorentz - df$random # will store Lorentz minus random
++         #print(df)
++         return(sum(df$Gini))
++     }
++     
++     NormalizedGini <- function(solution, submission) {
++         SumModelGini(solution, submission) / SumModelGini(solution, solution)
++     }    
++     
++     c(gini=NormalizedGini(data$obs,data$pred))
++ }
+> 
+> trControl <- trainControl(method="cv",
++                           number=10,
++                           verboseIter=TRUE,
++                           classProbs = FALSE,
++                           summaryFunction = giniSummary,
++                           savePredictions=TRUE,
++                           index = createFolds(train_set$Hazard,k=10, list=TRUE, returnTrain=TRUE),
++                           allowParallel = TRUE
++ )
+> #                         allowParallel = FALSE)
+> 
+> 
+> caretModelSpecEx<-function(method,tuneGrid,...) {
++     l <- apply(tuneGrid,MARGIN=1, FUN=function(x) {caretModelSpec(method, tuneGrid=as.data.frame(as.list(x)),...)})
++     names(l) <-apply(tuneGrid, MARGIN=1, function(r) {paste(c('rf', r), collapse='_' )})
++     l
++ }
+> 
+> 
+> model_specs <- c(
++   list(
++ #    rf5=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=5), ntree=50),
++     rf10=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=10), ntree=150),        
++     rf20=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=20), ntree=150),
++ #    rf21=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=20), ntree=51),    
++     rf30=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=30), ntree=150),        
++     rf50=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=50), ntree=150),        
++ #    gamSpline10=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=10)),
++ #    gamSpline20=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=20)),
++ #    gamSpline30=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=30)),      
++     gamSpline31=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=31)),          
++     gamSpline50=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=50)),              
++     gamSpline100=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=100)),              
++ 
++ #    lasso0.9=caretModelSpec(method='lasso', tuneGrid = data.frame(fraction=0.9)),      
++ #    lasso0.91=caretModelSpec(method='lasso', tuneGrid = data.frame(fraction=0.91)),      
++ #    lasso0.5=caretModelSpec(method='lasso', tuneGrid = data.frame(fraction=0.5)),      
++ #    lasso0.2=caretModelSpec(method='lasso', tuneGrid = data.frame(fraction=0.2)),
++     gamLoees_1=caretModelSpec(method='gamLoess', tuneGrid = data.frame(span = .5, degree = 1))
++     ),
++ #    gamLoees_2=caretModelSpec(method='gamLoess', tuneGrid = data.frame(span = .5, degree = 2)),
++ #    xgbTree=caretModelSpec(method='xgbTree', tuneGrid = data.frame(nrounds = 500, max_depth = 5, eta=0.001)),
++     #xgbTree=caretModelSpec(method='xgbTree', tuneGrid = data.frame(nrounds = 500, max_depth = 5, eta=0.01)),
++     #xgbTree=caretModelSpec(method='xgbTree', tuneGrid = data.frame(nrounds = 1000, max_depth = 10, eta=0.001)),
++     #xgbTree=caretModelSpec(method='xgbTree', tuneGrid = data.frame(nrounds = 1000, max_depth = 10, eta=0.005)),
++     #xgbTree=caretModelSpec(method='xgbTree', tuneGrid = data.frame(nrounds = 1000, max_depth = 15, eta=0.005))
++     caretModelSpecEx(method='xgbTree', tuneGrid = expand.grid(nrounds = c(500,1000,2000), max_depth = c(1,5,10), eta=c(0.1,0.01,0.001)))
++ #    krlsPoly2_01=caretModelSpec(method='krlsPoly', tuneGrid = data.frame(degree=2,lambda=0.01)),        
++ #    krlsPoly2_001=caretModelSpec(method='krlsPoly', tuneGrid = data.frame(degree=2,lambda=0.001)),        
++ #    krlsPoly3_01=caretModelSpec(method='krlsPoly', tuneGrid = data.frame(degree=3,lambda=0.01)),        
++ #    krlsPoly3_001=caretModelSpec(method='krlsPoly', tuneGrid = data.frame(degree=3,lambda=0.001))           
++ )
+> 
+> y<-train_set$Hazard
+> dummies <- dummyVars(~ ., data = train_set[,-1])
+> x_train = predict(dummies, newdata = train_set[,-1])
+> x_test = predict(dummies, newdata = test_data[,-1])
+> 
+> 
+> cl <- makeCluster(10, outfile="")
+starting worker pid=23000 on localhost:11100 at 16:08:30.228
+starting worker pid=23009 on localhost:11100 at 16:08:30.482
+starting worker pid=23018 on localhost:11100 at 16:08:30.728
+starting worker pid=23027 on localhost:11100 at 16:08:30.975
+starting worker pid=23036 on localhost:11100 at 16:08:31.225
+starting worker pid=23045 on localhost:11100 at 16:08:31.470
+starting worker pid=23054 on localhost:11100 at 16:08:31.720
+starting worker pid=23063 on localhost:11100 at 16:08:31.976
+starting worker pid=23072 on localhost:11100 at 16:08:32.227
+starting worker pid=23081 on localhost:11100 at 16:08:32.478
+> registerDoParallel(cl)
+> 
+> model_list <- caretList(x_train,
++     y,
++     trControl=trControl,
++     metric='gini',
++     tuneList=model_specs
++ )
+[1] "Loading model:cache/rf_10_150"
+[1] "Loading model:cache/rf_20_150"
+[1] "Loading model:cache/rf_30_150"
+[1] "Loading model:cache/rf_50_150"
+[1] "Loading model:cache/gamSpline_31"
+[1] "Loading model:cache/gamSpline_50"
+[1] "Loading model:cache/gamSpline_100"
+[1] "Loading model:cache/gamLoess_0.5_1"
+Loading required package: xgboost
+Loading required package: plyr
+Loading required package: caret
+Loading required package: lattice
+Loading required package: ggplot2
+Loading required package: caret
+Loading required package: lattice
+Loading required package: ggplot2
+Loading required package: caret
+Loading required package: lattice
+Loading required package: ggplot2
+Loading required package: caret
+Loading required package: lattice
+Loading required package: ggplot2
+Loading required package: caret
+Loading required package: lattice
+Loading required package: ggplot2
+Loading required package: caret
+Loading required package: lattice
+Loading required package: ggplot2
+Loading required package: caret
+Loading required package: lattice
+Loading required package: ggplot2
+Loading required package: caret
+Loading required package: lattice
+Loading required package: ggplot2
+Loading required package: caret
+Loading required package: lattice
+Loading required package: ggplot2
+Loading required package: caret
+Loading required package: lattice
+Loading required package: ggplot2
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold03: nrounds=500, max_depth=1, eta=0.1 
++ Fold05: nrounds=500, max_depth=1, eta=0.1 
++ Fold07: nrounds=500, max_depth=1, eta=0.1 
++ Fold08: nrounds=500, max_depth=1, eta=0.1 
++ Fold04: nrounds=500, max_depth=1, eta=0.1 
++ Fold06: nrounds=500, max_depth=1, eta=0.1 
++ Fold02: nrounds=500, max_depth=1, eta=0.1 
++ Fold09: nrounds=500, max_depth=1, eta=0.1 
++ Fold10: nrounds=500, max_depth=1, eta=0.1+ Fold01: nrounds=500, max_depth=1, eta=0.1 
+ 
+- Fold10: nrounds=500, max_depth=1, eta=0.1 
+- Fold01: nrounds=500, max_depth=1, eta=0.1 
+- Fold06: nrounds=500, max_depth=1, eta=0.1 
+- Fold02: nrounds=500, max_depth=1, eta=0.1 
+- Fold05: nrounds=500, max_depth=1, eta=0.1 
+- Fold08: nrounds=500, max_depth=1, eta=0.1 
+- Fold04: nrounds=500, max_depth=1, eta=0.1 
+- Fold03: nrounds=500, max_depth=1, eta=0.1 
+- Fold07: nrounds=500, max_depth=1, eta=0.1 
+- Fold09: nrounds=500, max_depth=1, eta=0.1 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_500_1_0.1"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=1000, max_depth=1, eta=0.1 
++ Fold02: nrounds=1000, max_depth=1, eta=0.1 
++ Fold03: nrounds=1000, max_depth=1, eta=0.1 
++ Fold04: nrounds=1000, max_depth=1, eta=0.1+ Fold08: nrounds=1000, max_depth=1, eta=0.1  
+
++ Fold05: nrounds=1000, max_depth=1, eta=0.1 
++ Fold09: nrounds=1000, max_depth=1, eta=0.1+ Fold07: nrounds=1000, max_depth=1, eta=0.1 
++ Fold06: nrounds=1000, max_depth=1, eta=0.1 
++ Fold10: nrounds=1000, max_depth=1, eta=0.1 
+ 
+- Fold07: nrounds=1000, max_depth=1, eta=0.1 
+- Fold05: nrounds=1000, max_depth=1, eta=0.1 
+- Fold09: nrounds=1000, max_depth=1, eta=0.1 
+- Fold02: nrounds=1000, max_depth=1, eta=0.1 
+- Fold01: nrounds=1000, max_depth=1, eta=0.1 
+- Fold08: nrounds=1000, max_depth=1, eta=0.1 
+- Fold03: nrounds=1000, max_depth=1, eta=0.1 
+- Fold06: nrounds=1000, max_depth=1, eta=0.1 
+- Fold10: nrounds=1000, max_depth=1, eta=0.1 
+- Fold04: nrounds=1000, max_depth=1, eta=0.1 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_1000_1_0.1"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=2000, max_depth=1, eta=0.1 
++ Fold03: nrounds=2000, max_depth=1, eta=0.1 
++ Fold05: nrounds=2000, max_depth=1, eta=0.1 
++ Fold09: nrounds=2000, max_depth=1, eta=0.1+ Fold07: nrounds=2000, max_depth=1, eta=0.1 
++ Fold02: nrounds=2000, max_depth=1, eta=0.1 
++ Fold04: nrounds=2000, max_depth=1, eta=0.1+ Fold06: nrounds=2000, max_depth=1, eta=0.1+ Fold08: nrounds=2000, max_depth=1, eta=0.1 
+ 
++ Fold10: nrounds=2000, max_depth=1, eta=0.1 
+  
+
+- Fold04: nrounds=2000, max_depth=1, eta=0.1 
+- Fold06: nrounds=2000, max_depth=1, eta=0.1 
+- Fold05: nrounds=2000, max_depth=1, eta=0.1 
+- Fold09: nrounds=2000, max_depth=1, eta=0.1 
+- Fold08: nrounds=2000, max_depth=1, eta=0.1 
+- Fold01: nrounds=2000, max_depth=1, eta=0.1 
+- Fold02: nrounds=2000, max_depth=1, eta=0.1 
+- Fold07: nrounds=2000, max_depth=1, eta=0.1 
+- Fold10: nrounds=2000, max_depth=1, eta=0.1 
+- Fold03: nrounds=2000, max_depth=1, eta=0.1 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_2000_1_0.1"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=500, max_depth=5, eta=0.1 
++ Fold03: nrounds=500, max_depth=5, eta=0.1 
++ Fold04: nrounds=500, max_depth=5, eta=0.1 
++ Fold08: nrounds=500, max_depth=5, eta=0.1 
++ Fold09: nrounds=500, max_depth=5, eta=0.1 
++ Fold10: nrounds=500, max_depth=5, eta=0.1+ Fold02: nrounds=500, max_depth=5, eta=0.1+ Fold05: nrounds=500, max_depth=5, eta=0.1 
++ Fold06: nrounds=500, max_depth=5, eta=0.1+ Fold07: nrounds=500, max_depth=5, eta=0.1 
+  
+ 
+
+- Fold04: nrounds=500, max_depth=5, eta=0.1 
+- Fold08: nrounds=500, max_depth=5, eta=0.1 
+- Fold09: nrounds=500, max_depth=5, eta=0.1 
+- Fold07: nrounds=500, max_depth=5, eta=0.1 
+- Fold10: nrounds=500, max_depth=5, eta=0.1 
+- Fold06: nrounds=500, max_depth=5, eta=0.1 
+- Fold03: nrounds=500, max_depth=5, eta=0.1 
+- Fold01: nrounds=500, max_depth=5, eta=0.1 
+- Fold05: nrounds=500, max_depth=5, eta=0.1 
+- Fold02: nrounds=500, max_depth=5, eta=0.1 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_500_5_0.1"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=1000, max_depth=5, eta=0.1+ Fold02: nrounds=1000, max_depth=5, eta=0.1 
++ Fold06: nrounds=1000, max_depth=5, eta=0.1 
++ Fold09: nrounds=1000, max_depth=5, eta=0.1 
++ Fold05: nrounds=1000, max_depth=5, eta=0.1 
++ Fold07: nrounds=1000, max_depth=5, eta=0.1 
++ Fold04: nrounds=1000, max_depth=5, eta=0.1 
++ Fold10: nrounds=1000, max_depth=5, eta=0.1 
+ 
++ Fold03: nrounds=1000, max_depth=5, eta=0.1+ Fold08: nrounds=1000, max_depth=5, eta=0.1  
+
+- Fold03: nrounds=1000, max_depth=5, eta=0.1 
+- Fold07: nrounds=1000, max_depth=5, eta=0.1 
+- Fold02: nrounds=1000, max_depth=5, eta=0.1 
+- Fold09: nrounds=1000, max_depth=5, eta=0.1 
+- Fold05: nrounds=1000, max_depth=5, eta=0.1 
+- Fold04: nrounds=1000, max_depth=5, eta=0.1 
+- Fold08: nrounds=1000, max_depth=5, eta=0.1 
+- Fold10: nrounds=1000, max_depth=5, eta=0.1 
+- Fold01: nrounds=1000, max_depth=5, eta=0.1 
+- Fold06: nrounds=1000, max_depth=5, eta=0.1 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_1000_5_0.1"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=2000, max_depth=5, eta=0.1+ Fold02: nrounds=2000, max_depth=5, eta=0.1 
++ Fold04: nrounds=2000, max_depth=5, eta=0.1 
++ Fold06: nrounds=2000, max_depth=5, eta=0.1 
++ Fold07: nrounds=2000, max_depth=5, eta=0.1 
++ Fold08: nrounds=2000, max_depth=5, eta=0.1 
++ Fold10: nrounds=2000, max_depth=5, eta=0.1 
++ Fold03: nrounds=2000, max_depth=5, eta=0.1 
+ + Fold05: nrounds=2000, max_depth=5, eta=0.1+ Fold09: nrounds=2000, max_depth=5, eta=0.1 
+
+ 
+- Fold05: nrounds=2000, max_depth=5, eta=0.1 
+- Fold08: nrounds=2000, max_depth=5, eta=0.1 
+- Fold01: nrounds=2000, max_depth=5, eta=0.1 
+- Fold07: nrounds=2000, max_depth=5, eta=0.1 
+- Fold09: nrounds=2000, max_depth=5, eta=0.1 
+- Fold06: nrounds=2000, max_depth=5, eta=0.1 
+- Fold02: nrounds=2000, max_depth=5, eta=0.1 
+- Fold10: nrounds=2000, max_depth=5, eta=0.1 
+- Fold03: nrounds=2000, max_depth=5, eta=0.1 
+- Fold04: nrounds=2000, max_depth=5, eta=0.1 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_2000_5_0.1"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=500, max_depth=10, eta=0.1+ Fold04: nrounds=500, max_depth=10, eta=0.1+ Fold03: nrounds=500, max_depth=10, eta=0.1 
++ Fold06: nrounds=500, max_depth=10, eta=0.1 
+ 
++ Fold07: nrounds=500, max_depth=10, eta=0.1  
++ Fold02: nrounds=500, max_depth=10, eta=0.1 
++ Fold10: nrounds=500, max_depth=10, eta=0.1 
++ Fold05: nrounds=500, max_depth=10, eta=0.1 
++ Fold08: nrounds=500, max_depth=10, eta=0.1 
++ Fold09: nrounds=500, max_depth=10, eta=0.1 
+
+- Fold10: nrounds=500, max_depth=10, eta=0.1 
+- Fold08: nrounds=500, max_depth=10, eta=0.1 
+- Fold04: nrounds=500, max_depth=10, eta=0.1 
+- Fold07: nrounds=500, max_depth=10, eta=0.1 
+- Fold06: nrounds=500, max_depth=10, eta=0.1 
+- Fold05: nrounds=500, max_depth=10, eta=0.1 
+- Fold03: nrounds=500, max_depth=10, eta=0.1 
+- Fold09: nrounds=500, max_depth=10, eta=0.1 
+- Fold02: nrounds=500, max_depth=10, eta=0.1 
+- Fold01: nrounds=500, max_depth=10, eta=0.1 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_500_10_0.1"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=1000, max_depth=10, eta=0.1+ Fold03: nrounds=1000, max_depth=10, eta=0.1 
+ 
++ Fold05: nrounds=1000, max_depth=10, eta=0.1 
++ Fold06: nrounds=1000, max_depth=10, eta=0.1 
++ Fold04: nrounds=1000, max_depth=10, eta=0.1 
++ Fold07: nrounds=1000, max_depth=10, eta=0.1 
++ Fold09: nrounds=1000, max_depth=10, eta=0.1 
++ Fold10: nrounds=1000, max_depth=10, eta=0.1 
++ Fold02: nrounds=1000, max_depth=10, eta=0.1 
++ Fold08: nrounds=1000, max_depth=10, eta=0.1 
+- Fold10: nrounds=1000, max_depth=10, eta=0.1 
+- Fold08: nrounds=1000, max_depth=10, eta=0.1 
+- Fold02: nrounds=1000, max_depth=10, eta=0.1 
+- Fold03: nrounds=1000, max_depth=10, eta=0.1 
+- Fold09: nrounds=1000, max_depth=10, eta=0.1 
+- Fold05: nrounds=1000, max_depth=10, eta=0.1 
+- Fold04: nrounds=1000, max_depth=10, eta=0.1 
+- Fold07: nrounds=1000, max_depth=10, eta=0.1 
+- Fold01: nrounds=1000, max_depth=10, eta=0.1 
+- Fold06: nrounds=1000, max_depth=10, eta=0.1 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_1000_10_0.1"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=2000, max_depth=10, eta=0.1+ Fold02: nrounds=2000, max_depth=10, eta=0.1 
++ Fold03: nrounds=2000, max_depth=10, eta=0.1 
++ Fold04: nrounds=2000, max_depth=10, eta=0.1 
++ Fold09: nrounds=2000, max_depth=10, eta=0.1 
+ + Fold05: nrounds=2000, max_depth=10, eta=0.1+ Fold06: nrounds=2000, max_depth=10, eta=0.1 
++ Fold07: nrounds=2000, max_depth=10, eta=0.1 
++ Fold08: nrounds=2000, max_depth=10, eta=0.1 
++ Fold10: nrounds=2000, max_depth=10, eta=0.1
+ 
+ 
+- Fold08: nrounds=2000, max_depth=10, eta=0.1 
+- Fold01: nrounds=2000, max_depth=10, eta=0.1 
+- Fold07: nrounds=2000, max_depth=10, eta=0.1 
+- Fold09: nrounds=2000, max_depth=10, eta=0.1 
+- Fold04: nrounds=2000, max_depth=10, eta=0.1 
+- Fold06: nrounds=2000, max_depth=10, eta=0.1 
+- Fold05: nrounds=2000, max_depth=10, eta=0.1 
+- Fold03: nrounds=2000, max_depth=10, eta=0.1 
+- Fold02: nrounds=2000, max_depth=10, eta=0.1 
+- Fold10: nrounds=2000, max_depth=10, eta=0.1 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_2000_10_0.1"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=500, max_depth=1, eta=0.01+ Fold02: nrounds=500, max_depth=1, eta=0.01 
++ Fold03: nrounds=500, max_depth=1, eta=0.01 
+ + Fold06: nrounds=500, max_depth=1, eta=0.01+ Fold04: nrounds=500, max_depth=1, eta=0.01 
++ Fold08: nrounds=500, max_depth=1, eta=0.01
+ 
++ Fold07: nrounds=500, max_depth=1, eta=0.01 
++ Fold10: nrounds=500, max_depth=1, eta=0.01 
++ Fold05: nrounds=500, max_depth=1, eta=0.01 
++ Fold09: nrounds=500, max_depth=1, eta=0.01 
+ 
+- Fold01: nrounds=500, max_depth=1, eta=0.01 
+- Fold06: nrounds=500, max_depth=1, eta=0.01 
+- Fold07: nrounds=500, max_depth=1, eta=0.01 
+- Fold02: nrounds=500, max_depth=1, eta=0.01 
+- Fold03: nrounds=500, max_depth=1, eta=0.01 
+- Fold09: nrounds=500, max_depth=1, eta=0.01 
+- Fold10: nrounds=500, max_depth=1, eta=0.01 
+- Fold08: nrounds=500, max_depth=1, eta=0.01 
+- Fold04: nrounds=500, max_depth=1, eta=0.01 
+- Fold05: nrounds=500, max_depth=1, eta=0.01 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_500_1_0.01"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=1000, max_depth=1, eta=0.01 
++ Fold04: nrounds=1000, max_depth=1, eta=0.01 
++ Fold06: nrounds=1000, max_depth=1, eta=0.01 
++ Fold02: nrounds=1000, max_depth=1, eta=0.01 
++ Fold08: nrounds=1000, max_depth=1, eta=0.01+ Fold05: nrounds=1000, max_depth=1, eta=0.01+ Fold07: nrounds=1000, max_depth=1, eta=0.01 + Fold09: nrounds=1000, max_depth=1, eta=0.01 
++ Fold03: nrounds=1000, max_depth=1, eta=0.01 
++ Fold10: nrounds=1000, max_depth=1, eta=0.01 
+ 
+ 
+
+- Fold07: nrounds=1000, max_depth=1, eta=0.01 
+- Fold04: nrounds=1000, max_depth=1, eta=0.01 
+- Fold08: nrounds=1000, max_depth=1, eta=0.01 
+- Fold09: nrounds=1000, max_depth=1, eta=0.01 
+- Fold06: nrounds=1000, max_depth=1, eta=0.01 
+- Fold03: nrounds=1000, max_depth=1, eta=0.01 
+- Fold02: nrounds=1000, max_depth=1, eta=0.01 
+- Fold01: nrounds=1000, max_depth=1, eta=0.01 
+- Fold05: nrounds=1000, max_depth=1, eta=0.01 
+- Fold10: nrounds=1000, max_depth=1, eta=0.01 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_1000_1_0.01"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=2000, max_depth=1, eta=0.01+ Fold02: nrounds=2000, max_depth=1, eta=0.01 
++ Fold03: nrounds=2000, max_depth=1, eta=0.01 
+ 
++ Fold04: nrounds=2000, max_depth=1, eta=0.01 + Fold07: nrounds=2000, max_depth=1, eta=0.01 
++ Fold06: nrounds=2000, max_depth=1, eta=0.01 + Fold05: nrounds=2000, max_depth=1, eta=0.01 
++ Fold08: nrounds=2000, max_depth=1, eta=0.01 
++ Fold10: nrounds=2000, max_depth=1, eta=0.01 
++ Fold09: nrounds=2000, max_depth=1, eta=0.01 
+
+
+- Fold01: nrounds=2000, max_depth=1, eta=0.01 
+- Fold03: nrounds=2000, max_depth=1, eta=0.01 
+- Fold08: nrounds=2000, max_depth=1, eta=0.01 
+- Fold07: nrounds=2000, max_depth=1, eta=0.01 
+- Fold09: nrounds=2000, max_depth=1, eta=0.01 
+- Fold05: nrounds=2000, max_depth=1, eta=0.01 
+- Fold04: nrounds=2000, max_depth=1, eta=0.01 
+- Fold02: nrounds=2000, max_depth=1, eta=0.01 
+- Fold10: nrounds=2000, max_depth=1, eta=0.01 
+- Fold06: nrounds=2000, max_depth=1, eta=0.01 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_2000_1_0.01"
+[1] "Loading model:cache/xgbTree_500_5_0.01"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=1000, max_depth=5, eta=0.01+ Fold02: nrounds=1000, max_depth=5, eta=0.01 
++ Fold03: nrounds=1000, max_depth=5, eta=0.01 
+ 
++ Fold04: nrounds=1000, max_depth=5, eta=0.01 
++ Fold10: nrounds=1000, max_depth=5, eta=0.01+ Fold06: nrounds=1000, max_depth=5, eta=0.01 
++ Fold05: nrounds=1000, max_depth=5, eta=0.01 
++ Fold07: nrounds=1000, max_depth=5, eta=0.01 
++ Fold08: nrounds=1000, max_depth=5, eta=0.01 + Fold09: nrounds=1000, max_depth=5, eta=0.01  
+
+
+- Fold01: nrounds=1000, max_depth=5, eta=0.01 
+- Fold06: nrounds=1000, max_depth=5, eta=0.01 
+- Fold05: nrounds=1000, max_depth=5, eta=0.01 
+- Fold03: nrounds=1000, max_depth=5, eta=0.01 
+- Fold04: nrounds=1000, max_depth=5, eta=0.01 
+- Fold08: nrounds=1000, max_depth=5, eta=0.01 
+- Fold07: nrounds=1000, max_depth=5, eta=0.01 
+- Fold10: nrounds=1000, max_depth=5, eta=0.01 
+- Fold02: nrounds=1000, max_depth=5, eta=0.01 
+- Fold09: nrounds=1000, max_depth=5, eta=0.01 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_1000_5_0.01"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=2000, max_depth=5, eta=0.01+ Fold02: nrounds=2000, max_depth=5, eta=0.01 
++ Fold03: nrounds=2000, max_depth=5, eta=0.01 
++ Fold04: nrounds=2000, max_depth=5, eta=0.01 
++ Fold05: nrounds=2000, max_depth=5, eta=0.01  
++ Fold07: nrounds=2000, max_depth=5, eta=0.01 
++ Fold06: nrounds=2000, max_depth=5, eta=0.01 
++ Fold09: nrounds=2000, max_depth=5, eta=0.01 
++ Fold08: nrounds=2000, max_depth=5, eta=0.01 
++ Fold10: nrounds=2000, max_depth=5, eta=0.01
+ 
+- Fold03: nrounds=2000, max_depth=5, eta=0.01 
+- Fold08: nrounds=2000, max_depth=5, eta=0.01 
+- Fold06: nrounds=2000, max_depth=5, eta=0.01 
+- Fold07: nrounds=2000, max_depth=5, eta=0.01 
+- Fold02: nrounds=2000, max_depth=5, eta=0.01 
+- Fold05: nrounds=2000, max_depth=5, eta=0.01 
+- Fold10: nrounds=2000, max_depth=5, eta=0.01 
+- Fold01: nrounds=2000, max_depth=5, eta=0.01 
+- Fold04: nrounds=2000, max_depth=5, eta=0.01 
+- Fold09: nrounds=2000, max_depth=5, eta=0.01 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_2000_5_0.01"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=500, max_depth=10, eta=0.01+ Fold02: nrounds=500, max_depth=10, eta=0.01 
+ 
++ Fold03: nrounds=500, max_depth=10, eta=0.01 
++ Fold04: nrounds=500, max_depth=10, eta=0.01+ Fold05: nrounds=500, max_depth=10, eta=0.01 
++ Fold06: nrounds=500, max_depth=10, eta=0.01+ Fold08: nrounds=500, max_depth=10, eta=0.01 
++ Fold07: nrounds=500, max_depth=10, eta=0.01 
++ Fold10: nrounds=500, max_depth=10, eta=0.01 
++ Fold09: nrounds=500, max_depth=10, eta=0.01  
+ 
+
+- Fold07: nrounds=500, max_depth=10, eta=0.01 
+- Fold03: nrounds=500, max_depth=10, eta=0.01 
+- Fold08: nrounds=500, max_depth=10, eta=0.01 
+- Fold01: nrounds=500, max_depth=10, eta=0.01 
+- Fold04: nrounds=500, max_depth=10, eta=0.01 
+- Fold05: nrounds=500, max_depth=10, eta=0.01 
+- Fold09: nrounds=500, max_depth=10, eta=0.01 
+- Fold10: nrounds=500, max_depth=10, eta=0.01 
+- Fold02: nrounds=500, max_depth=10, eta=0.01 
+- Fold06: nrounds=500, max_depth=10, eta=0.01 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_500_10_0.01"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=1000, max_depth=10, eta=0.01 
++ Fold04: nrounds=1000, max_depth=10, eta=0.01 
++ Fold05: nrounds=1000, max_depth=10, eta=0.01 
++ Fold06: nrounds=1000, max_depth=10, eta=0.01 
++ Fold02: nrounds=1000, max_depth=10, eta=0.01+ Fold03: nrounds=1000, max_depth=10, eta=0.01 
++ Fold07: nrounds=1000, max_depth=10, eta=0.01 
++ Fold08: nrounds=1000, max_depth=10, eta=0.01 
++ Fold09: nrounds=1000, max_depth=10, eta=0.01+ Fold10: nrounds=1000, max_depth=10, eta=0.01 
+  
+
+- Fold10: nrounds=1000, max_depth=10, eta=0.01 
+- Fold09: nrounds=1000, max_depth=10, eta=0.01 
+- Fold03: nrounds=1000, max_depth=10, eta=0.01 
+- Fold01: nrounds=1000, max_depth=10, eta=0.01 
+- Fold07: nrounds=1000, max_depth=10, eta=0.01 
+- Fold04: nrounds=1000, max_depth=10, eta=0.01 
+- Fold05: nrounds=1000, max_depth=10, eta=0.01 
+- Fold08: nrounds=1000, max_depth=10, eta=0.01 
+- Fold02: nrounds=1000, max_depth=10, eta=0.01 
+- Fold06: nrounds=1000, max_depth=10, eta=0.01 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_1000_10_0.01"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=2000, max_depth=10, eta=0.01+ Fold02: nrounds=2000, max_depth=10, eta=0.01 
++ Fold03: nrounds=2000, max_depth=10, eta=0.01 
+ 
++ Fold04: nrounds=2000, max_depth=10, eta=0.01 
++ Fold06: nrounds=2000, max_depth=10, eta=0.01 
++ Fold05: nrounds=2000, max_depth=10, eta=0.01 
++ Fold07: nrounds=2000, max_depth=10, eta=0.01 
++ Fold08: nrounds=2000, max_depth=10, eta=0.01 
++ Fold09: nrounds=2000, max_depth=10, eta=0.01 
++ Fold10: nrounds=2000, max_depth=10, eta=0.01 
+- Fold03: nrounds=2000, max_depth=10, eta=0.01 
+- Fold05: nrounds=2000, max_depth=10, eta=0.01 
+- Fold10: nrounds=2000, max_depth=10, eta=0.01 
+- Fold08: nrounds=2000, max_depth=10, eta=0.01 
+- Fold01: nrounds=2000, max_depth=10, eta=0.01 
+- Fold07: nrounds=2000, max_depth=10, eta=0.01 
+- Fold09: nrounds=2000, max_depth=10, eta=0.01 
+- Fold06: nrounds=2000, max_depth=10, eta=0.01 
+- Fold02: nrounds=2000, max_depth=10, eta=0.01 
+- Fold04: nrounds=2000, max_depth=10, eta=0.01 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_2000_10_0.01"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=500, max_depth=1, eta=0.001 
++ Fold03: nrounds=500, max_depth=1, eta=0.001 
++ Fold04: nrounds=500, max_depth=1, eta=0.001 
++ Fold08: nrounds=500, max_depth=1, eta=0.001 
++ Fold10: nrounds=500, max_depth=1, eta=0.001 
++ Fold02: nrounds=500, max_depth=1, eta=0.001 
++ Fold06: nrounds=500, max_depth=1, eta=0.001 
++ Fold07: nrounds=500, max_depth=1, eta=0.001+ Fold09: nrounds=500, max_depth=1, eta=0.001 
++ Fold05: nrounds=500, max_depth=1, eta=0.001 
+ 
+- Fold05: nrounds=500, max_depth=1, eta=0.001 
+- Fold09: nrounds=500, max_depth=1, eta=0.001 
+- Fold08: nrounds=500, max_depth=1, eta=0.001 
+- Fold04: nrounds=500, max_depth=1, eta=0.001 
+- Fold06: nrounds=500, max_depth=1, eta=0.001 
+- Fold02: nrounds=500, max_depth=1, eta=0.001 
+- Fold07: nrounds=500, max_depth=1, eta=0.001 
+- Fold10: nrounds=500, max_depth=1, eta=0.001 
+- Fold03: nrounds=500, max_depth=1, eta=0.001 
+- Fold01: nrounds=500, max_depth=1, eta=0.001 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_500_1_0.001"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=1000, max_depth=1, eta=0.001 
++ Fold04: nrounds=1000, max_depth=1, eta=0.001 + Fold02: nrounds=1000, max_depth=1, eta=0.001
+ 
++ Fold05: nrounds=1000, max_depth=1, eta=0.001 
++ Fold08: nrounds=1000, max_depth=1, eta=0.001 
++ Fold07: nrounds=1000, max_depth=1, eta=0.001+ Fold09: nrounds=1000, max_depth=1, eta=0.001 
++ Fold03: nrounds=1000, max_depth=1, eta=0.001 
++ Fold06: nrounds=1000, max_depth=1, eta=0.001 
++ Fold10: nrounds=1000, max_depth=1, eta=0.001  
+
+- Fold05: nrounds=1000, max_depth=1, eta=0.001 
+- Fold08: nrounds=1000, max_depth=1, eta=0.001 
+- Fold01: nrounds=1000, max_depth=1, eta=0.001 
+- Fold09: nrounds=1000, max_depth=1, eta=0.001 
+- Fold04: nrounds=1000, max_depth=1, eta=0.001 
+- Fold10: nrounds=1000, max_depth=1, eta=0.001 
+- Fold06: nrounds=1000, max_depth=1, eta=0.001 
+- Fold07: nrounds=1000, max_depth=1, eta=0.001 
+- Fold03: nrounds=1000, max_depth=1, eta=0.001 
+- Fold02: nrounds=1000, max_depth=1, eta=0.001 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_1000_1_0.001"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=2000, max_depth=1, eta=0.001+ Fold02: nrounds=2000, max_depth=1, eta=0.001 
++ Fold03: nrounds=2000, max_depth=1, eta=0.001 
++ Fold04: nrounds=2000, max_depth=1, eta=0.001 
++ Fold06: nrounds=2000, max_depth=1, eta=0.001 
+ + Fold05: nrounds=2000, max_depth=1, eta=0.001
+ 
++ Fold07: nrounds=2000, max_depth=1, eta=0.001 + Fold09: nrounds=2000, max_depth=1, eta=0.001 
++ Fold10: nrounds=2000, max_depth=1, eta=0.001 
++ Fold08: nrounds=2000, max_depth=1, eta=0.001
+ 
+- Fold04: nrounds=2000, max_depth=1, eta=0.001 
+- Fold02: nrounds=2000, max_depth=1, eta=0.001 
+- Fold10: nrounds=2000, max_depth=1, eta=0.001 
+- Fold07: nrounds=2000, max_depth=1, eta=0.001 
+- Fold09: nrounds=2000, max_depth=1, eta=0.001 
+- Fold06: nrounds=2000, max_depth=1, eta=0.001 
+- Fold03: nrounds=2000, max_depth=1, eta=0.001 
+- Fold01: nrounds=2000, max_depth=1, eta=0.001 
+- Fold05: nrounds=2000, max_depth=1, eta=0.001 
+- Fold08: nrounds=2000, max_depth=1, eta=0.001 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_2000_1_0.001"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=500, max_depth=5, eta=0.001+ Fold02: nrounds=500, max_depth=5, eta=0.001 
+ 
++ Fold03: nrounds=500, max_depth=5, eta=0.001 
++ Fold04: nrounds=500, max_depth=5, eta=0.001+ Fold05: nrounds=500, max_depth=5, eta=0.001 
++ Fold06: nrounds=500, max_depth=5, eta=0.001 
++ Fold07: nrounds=500, max_depth=5, eta=0.001 
++ Fold08: nrounds=500, max_depth=5, eta=0.001 
++ Fold09: nrounds=500, max_depth=5, eta=0.001 
++ Fold10: nrounds=500, max_depth=5, eta=0.001 
+ 
+- Fold10: nrounds=500, max_depth=5, eta=0.001 
+- Fold01: nrounds=500, max_depth=5, eta=0.001 
+- Fold02: nrounds=500, max_depth=5, eta=0.001 
+- Fold04: nrounds=500, max_depth=5, eta=0.001 
+- Fold08: nrounds=500, max_depth=5, eta=0.001 
+- Fold06: nrounds=500, max_depth=5, eta=0.001 
+- Fold07: nrounds=500, max_depth=5, eta=0.001 
+- Fold05: nrounds=500, max_depth=5, eta=0.001 
+- Fold03: nrounds=500, max_depth=5, eta=0.001 
+- Fold09: nrounds=500, max_depth=5, eta=0.001 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_500_5_0.001"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=1000, max_depth=5, eta=0.001+ Fold02: nrounds=1000, max_depth=5, eta=0.001 
++ Fold05: nrounds=1000, max_depth=5, eta=0.001 
++ Fold04: nrounds=1000, max_depth=5, eta=0.001 
++ Fold06: nrounds=1000, max_depth=5, eta=0.001+ Fold03: nrounds=1000, max_depth=5, eta=0.001+ Fold08: nrounds=1000, max_depth=5, eta=0.001 
++ Fold09: nrounds=1000, max_depth=5, eta=0.001 
+   
++ Fold07: nrounds=1000, max_depth=5, eta=0.001 
+
++ Fold10: nrounds=1000, max_depth=5, eta=0.001 
+
+- Fold06: nrounds=1000, max_depth=5, eta=0.001 
+- Fold10: nrounds=1000, max_depth=5, eta=0.001 
+- Fold05: nrounds=1000, max_depth=5, eta=0.001 
+- Fold07: nrounds=1000, max_depth=5, eta=0.001 
+- Fold09: nrounds=1000, max_depth=5, eta=0.001 
+- Fold04: nrounds=1000, max_depth=5, eta=0.001 
+- Fold03: nrounds=1000, max_depth=5, eta=0.001 
+- Fold08: nrounds=1000, max_depth=5, eta=0.001 
+- Fold02: nrounds=1000, max_depth=5, eta=0.001 
+- Fold01: nrounds=1000, max_depth=5, eta=0.001 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_1000_5_0.001"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=2000, max_depth=5, eta=0.001+ Fold02: nrounds=2000, max_depth=5, eta=0.001 
++ Fold04: nrounds=2000, max_depth=5, eta=0.001 
+ 
++ Fold05: nrounds=2000, max_depth=5, eta=0.001+ Fold06: nrounds=2000, max_depth=5, eta=0.001 
++ Fold03: nrounds=2000, max_depth=5, eta=0.001 
++ Fold07: nrounds=2000, max_depth=5, eta=0.001 + Fold08: nrounds=2000, max_depth=5, eta=0.001 
++ Fold09: nrounds=2000, max_depth=5, eta=0.001 
++ Fold10: nrounds=2000, max_depth=5, eta=0.001 
+ 
+
+- Fold07: nrounds=2000, max_depth=5, eta=0.001 
+- Fold04: nrounds=2000, max_depth=5, eta=0.001 
+- Fold06: nrounds=2000, max_depth=5, eta=0.001 
+- Fold08: nrounds=2000, max_depth=5, eta=0.001 
+- Fold02: nrounds=2000, max_depth=5, eta=0.001 
+- Fold09: nrounds=2000, max_depth=5, eta=0.001 
+- Fold01: nrounds=2000, max_depth=5, eta=0.001 
+- Fold10: nrounds=2000, max_depth=5, eta=0.001 
+- Fold03: nrounds=2000, max_depth=5, eta=0.001 
+- Fold05: nrounds=2000, max_depth=5, eta=0.001 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_2000_5_0.001"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=500, max_depth=10, eta=0.001 
++ Fold07: nrounds=500, max_depth=10, eta=0.001+ Fold06: nrounds=500, max_depth=10, eta=0.001 
++ Fold03: nrounds=500, max_depth=10, eta=0.001 
++ Fold04: nrounds=500, max_depth=10, eta=0.001 
++ Fold05: nrounds=500, max_depth=10, eta=0.001 
++ Fold09: nrounds=500, max_depth=10, eta=0.001 
++ Fold10: nrounds=500, max_depth=10, eta=0.001 
++ Fold02: nrounds=500, max_depth=10, eta=0.001  
++ Fold08: nrounds=500, max_depth=10, eta=0.001
+ 
+- Fold10: nrounds=500, max_depth=10, eta=0.001 
+- Fold02: nrounds=500, max_depth=10, eta=0.001 
+- Fold06: nrounds=500, max_depth=10, eta=0.001 
+- Fold09: nrounds=500, max_depth=10, eta=0.001 
+- Fold05: nrounds=500, max_depth=10, eta=0.001 
+- Fold07: nrounds=500, max_depth=10, eta=0.001 
+- Fold03: nrounds=500, max_depth=10, eta=0.001 
+- Fold08: nrounds=500, max_depth=10, eta=0.001 
+- Fold01: nrounds=500, max_depth=10, eta=0.001 
+- Fold04: nrounds=500, max_depth=10, eta=0.001 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_500_10_0.001"
+[1] "Loading model:cache/xgbTree_1000_10_0.001"
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
+loaded caret and set parent environment
++ Fold01: nrounds=2000, max_depth=10, eta=0.001+ Fold02: nrounds=2000, max_depth=10, eta=0.001 
++ Fold03: nrounds=2000, max_depth=10, eta=0.001 
++ Fold04: nrounds=2000, max_depth=10, eta=0.001 
++ Fold06: nrounds=2000, max_depth=10, eta=0.001 
+ 
++ Fold08: nrounds=2000, max_depth=10, eta=0.001 
++ Fold05: nrounds=2000, max_depth=10, eta=0.001 
++ Fold09: nrounds=2000, max_depth=10, eta=0.001 
++ Fold07: nrounds=2000, max_depth=10, eta=0.001 
++ Fold10: nrounds=2000, max_depth=10, eta=0.001 
+- Fold03: nrounds=2000, max_depth=10, eta=0.001 
+- Fold09: nrounds=2000, max_depth=10, eta=0.001 
+- Fold05: nrounds=2000, max_depth=10, eta=0.001 
+- Fold01: nrounds=2000, max_depth=10, eta=0.001 
+- Fold04: nrounds=2000, max_depth=10, eta=0.001 
+- Fold07: nrounds=2000, max_depth=10, eta=0.001 
+- Fold10: nrounds=2000, max_depth=10, eta=0.001 
+- Fold06: nrounds=2000, max_depth=10, eta=0.001 
+- Fold08: nrounds=2000, max_depth=10, eta=0.001 
+- Fold02: nrounds=2000, max_depth=10, eta=0.001 
+Aggregating results
+Fitting final model on full training set
+[1] "saving model: cache/xgbTree_2000_10_0.001"
+> 
+> stopCluster(cl)
+> 
+> 
+> xyplot(resamples(model_list))
+> modelCor(resamples(model_list))
+                      rf10      rf20      rf30      rf50 gamSpline31
+rf10             1.0000000 0.9259752 0.9349186 0.9675907   0.8262700
+rf20             0.9259752 1.0000000 0.9512508 0.9599097   0.7543895
+rf30             0.9349186 0.9512508 1.0000000 0.9446970   0.8580363
+rf50             0.9675907 0.9599097 0.9446970 1.0000000   0.7736689
+gamSpline31      0.8262700 0.7543895 0.8580363 0.7736689   1.0000000
+gamSpline50      0.8280215 0.7461154 0.8497509 0.7732103   0.9990988
+gamSpline100     0.8354311 0.7496114 0.8571016 0.7803518   0.9981159
+gamLoees_1       0.8583024 0.7596009 0.8559184 0.7839363   0.9899441
+rf_500_1_0.1     0.8852840 0.8838458 0.9248345 0.9041535   0.9299618
+rf_1000_1_0.1    0.8868145 0.8778341 0.9155619 0.8952396   0.9333513
+rf_2000_1_0.1    0.8919757 0.8848188 0.9263965 0.8944936   0.9393044
+rf_500_5_0.1     0.8825094 0.8708084 0.9353103 0.8947884   0.8447058
+rf_1000_5_0.1    0.8160713 0.7921713 0.8787902 0.8336232   0.7936368
+rf_2000_5_0.1    0.8675437 0.8310064 0.8932840 0.8863149   0.7916146
+rf_500_10_0.1    0.7270981 0.6267809 0.7649588 0.7504427   0.7699651
+rf_1000_10_0.1   0.6608598 0.5689043 0.7113044 0.6906913   0.6997494
+rf_2000_10_0.1   0.6636184 0.5655634 0.7053073 0.6892970   0.6850820
+rf_500_1_0.01    0.9269505 0.9653474 0.9441401 0.9769162   0.8163831
+rf_1000_1_0.01   0.9227544 0.9561937 0.9604103 0.9630354   0.8610492
+rf_2000_1_0.01   0.9004330 0.9212267 0.9450868 0.9356572   0.8980915
+rf_500_5_0.01    0.9406018 0.9463290 0.9487980 0.9628813   0.8802742
+rf_1000_5_0.01   0.9410834 0.9292081 0.9471847 0.9534574   0.8867119
+rf_2000_5_0.01   0.9328536 0.9161092 0.9510651 0.9440545   0.8765287
+rf_500_10_0.01   0.8669875 0.8864759 0.9000088 0.8920519   0.8597675
+rf_1000_10_0.01  0.8982987 0.9236892 0.9462272 0.9195386   0.8733855
+rf_2000_10_0.01  0.8908051 0.9102147 0.9477638 0.9249133   0.8703872
+rf_500_1_0.001   0.8011894 0.8541874 0.8321241 0.8743627   0.7278668
+rf_1000_1_0.001  0.7093252 0.8596372 0.7780151 0.8397527   0.4160403
+rf_2000_1_0.001  0.8621501 0.9390332 0.9049959 0.9466809   0.7009681
+rf_500_5_0.001   0.8748718 0.9426980 0.9215841 0.9539895   0.7707044
+rf_1000_5_0.001  0.8790892 0.9420337 0.9218703 0.9477269   0.8032763
+rf_2000_5_0.001  0.9184140 0.9639412 0.9452244 0.9699279   0.8255871
+rf_500_10_0.001  0.7745922 0.8582442 0.8326443 0.8573964   0.7747737
+rf_1000_10_0.001 0.8201014 0.8835619 0.8817101 0.8721727   0.8371721
+rf_2000_10_0.001 0.8430594 0.8821997 0.8822022 0.8823227   0.8644175
+                 gamSpline50 gamSpline100 gamLoees_1 rf_500_1_0.1 rf_1000_1_0.1
+rf10               0.8280215    0.8354311  0.8583024    0.8852840     0.8868145
+rf20               0.7461154    0.7496114  0.7596009    0.8838458     0.8778341
+rf30               0.8497509    0.8571016  0.8559184    0.9248345     0.9155619
+rf50               0.7732103    0.7803518  0.7839363    0.9041535     0.8952396
+gamSpline31        0.9990988    0.9981159  0.9899441    0.9299618     0.9333513
+gamSpline50        1.0000000    0.9992859  0.9898027    0.9275201     0.9316007
+gamSpline100       0.9992859    1.0000000  0.9906505    0.9268743     0.9296622
+gamLoees_1         0.9898027    0.9906505  1.0000000    0.9055548     0.9106422
+rf_500_1_0.1       0.9275201    0.9268743  0.9055548    1.0000000     0.9979577
+rf_1000_1_0.1      0.9316007    0.9296622  0.9106422    0.9979577     1.0000000
+rf_2000_1_0.1      0.9367407    0.9347998  0.9164986    0.9953918     0.9982160
+rf_500_5_0.1       0.8453591    0.8485220  0.8146566    0.9213187     0.9222149
+rf_1000_5_0.1      0.7941931    0.7953932  0.7530349    0.8575374     0.8574869
+rf_2000_5_0.1      0.7901991    0.7892156  0.7731732    0.8660112     0.8651736
+rf_500_10_0.1      0.7742665    0.7750570  0.7391699    0.8036767     0.7972786
+rf_1000_10_0.1     0.7005462    0.6998852  0.6714820    0.7353543     0.7275268
+rf_2000_10_0.1     0.6857957    0.6850528  0.6601461    0.7276230     0.7217531
+rf_500_1_0.01      0.8113096    0.8138880  0.8134738    0.9430959     0.9322400
+rf_1000_1_0.01     0.8570062    0.8601904  0.8480382    0.9746653     0.9666889
+rf_2000_1_0.01     0.8943077    0.8959176  0.8778624    0.9927781     0.9858119
+rf_500_5_0.01      0.8804081    0.8828184  0.8681542    0.9719038     0.9684271
+rf_1000_5_0.01     0.8882766    0.8906780  0.8728065    0.9742546     0.9744287
+rf_2000_5_0.01     0.8782645    0.8806521  0.8593310    0.9575346     0.9582519
+rf_500_10_0.01     0.8591562    0.8626974  0.8338314    0.9644621     0.9622343
+rf_1000_10_0.01    0.8698340    0.8732880  0.8494604    0.9688820     0.9658303
+rf_2000_10_0.01    0.8646929    0.8674391  0.8429277    0.9748505     0.9680510
+rf_500_1_0.001     0.7239105    0.7335569  0.7331798    0.8339361     0.8064033
+rf_1000_1_0.001    0.4056694    0.4162821  0.4002670    0.6824663     0.6580194
+rf_2000_1_0.001    0.6902643    0.6943492  0.6973665    0.8648591     0.8441847
+rf_500_5_0.001     0.7669436    0.7730814  0.7528293    0.9091176     0.8890593
+rf_1000_5_0.001    0.7992986    0.8042077  0.7866417    0.9244647     0.9063737
+rf_2000_5_0.001    0.8219308    0.8260319  0.8142766    0.9484713     0.9365202
+rf_500_10_0.001    0.7728887    0.7765441  0.7383809    0.9117901     0.8952496
+rf_1000_10_0.001   0.8326810    0.8376176  0.8127326    0.9374821     0.9232677
+rf_2000_10_0.001   0.8630433    0.8657861  0.8371126    0.9574965     0.9493303
+                 rf_2000_1_0.1 rf_500_5_0.1 rf_1000_5_0.1 rf_2000_5_0.1
+rf10                 0.8919757    0.8825094     0.8160713     0.8675437
+rf20                 0.8848188    0.8708084     0.7921713     0.8310064
+rf30                 0.9263965    0.9353103     0.8787902     0.8932840
+rf50                 0.8944936    0.8947884     0.8336232     0.8863149
+gamSpline31          0.9393044    0.8447058     0.7936368     0.7916146
+gamSpline50          0.9367407    0.8453591     0.7941931     0.7901991
+gamSpline100         0.9347998    0.8485220     0.7953932     0.7892156
+gamLoees_1           0.9164986    0.8146566     0.7530349     0.7731732
+rf_500_1_0.1         0.9953918    0.9213187     0.8575374     0.8660112
+rf_1000_1_0.1        0.9982160    0.9222149     0.8574869     0.8651736
+rf_2000_1_0.1        1.0000000    0.9340622     0.8742718     0.8745315
+rf_500_5_0.1         0.9340622    1.0000000     0.9761944     0.9386243
+rf_1000_5_0.1        0.8742718    0.9761944     1.0000000     0.9570625
+rf_2000_5_0.1        0.8745315    0.9386243     0.9570625     1.0000000
+rf_500_10_0.1        0.7943812    0.8456118     0.8798943     0.9247110
+rf_1000_10_0.1       0.7234111    0.7741333     0.8208151     0.8964385
+rf_2000_10_0.1       0.7172319    0.7689975     0.8141750     0.8949161
+rf_500_1_0.01        0.9280593    0.8748755     0.8043489     0.8667983
+rf_1000_1_0.01       0.9643426    0.9193023     0.8423403     0.8683024
+rf_2000_1_0.01       0.9822410    0.9162627     0.8444041     0.8624211
+rf_500_5_0.01        0.9702380    0.9391030     0.8749186     0.8814277
+rf_1000_5_0.01       0.9769392    0.9615768     0.9003701     0.8981301
+rf_2000_5_0.01       0.9639904    0.9843439     0.9393875     0.9354071
+rf_500_10_0.01       0.9612792    0.9043014     0.8190031     0.7767646
+rf_1000_10_0.01      0.9714522    0.9414702     0.8736014     0.8384214
+rf_2000_10_0.01      0.9715717    0.9361688     0.8872942     0.8728014
+rf_500_1_0.001       0.7912629    0.6903578     0.5869642     0.6541620
+rf_1000_1_0.001      0.6546652    0.6966781     0.6287357     0.6455842
+rf_2000_1_0.001      0.8393785    0.7950154     0.7406217     0.8245575
+rf_500_5_0.001       0.8867820    0.8626352     0.8007679     0.8195782
+rf_1000_5_0.001      0.9042965    0.8583178     0.7917909     0.8100555
+rf_2000_5_0.001      0.9354444    0.8921327     0.8211148     0.8431671
+rf_500_10_0.001      0.8861662    0.8002443     0.7114317     0.6844576
+rf_1000_10_0.001     0.9181450    0.8207158     0.7225976     0.7010169
+rf_2000_10_0.001     0.9463403    0.8600408     0.7748558     0.7432957
+                 rf_500_10_0.1 rf_1000_10_0.1 rf_2000_10_0.1 rf_500_1_0.01
+rf10                 0.7270981      0.6608598      0.6636184     0.9269505
+rf20                 0.6267809      0.5689043      0.5655634     0.9653474
+rf30                 0.7649588      0.7113044      0.7053073     0.9441401
+rf50                 0.7504427      0.6906913      0.6892970     0.9769162
+gamSpline31          0.7699651      0.6997494      0.6850820     0.8163831
+gamSpline50          0.7742665      0.7005462      0.6857957     0.8113096
+gamSpline100         0.7750570      0.6998852      0.6850528     0.8138880
+gamLoees_1           0.7391699      0.6714820      0.6601461     0.8134738
+rf_500_1_0.1         0.8036767      0.7353543      0.7276230     0.9430959
+rf_1000_1_0.1        0.7972786      0.7275268      0.7217531     0.9322400
+rf_2000_1_0.1        0.7943812      0.7234111      0.7172319     0.9280593
+rf_500_5_0.1         0.8456118      0.7741333      0.7689975     0.8748755
+rf_1000_5_0.1        0.8798943      0.8208151      0.8141750     0.8043489
+rf_2000_5_0.1        0.9247110      0.8964385      0.8949161     0.8667983
+rf_500_10_0.1        1.0000000      0.9862435      0.9813882     0.7427231
+rf_1000_10_0.1       0.9862435      1.0000000      0.9982799     0.6909305
+rf_2000_10_0.1       0.9813882      0.9982799      1.0000000     0.6846767
+rf_500_1_0.01        0.7427231      0.6909305      0.6846767     1.0000000
+rf_1000_1_0.01       0.7602101      0.6958666      0.6891160     0.9870554
+rf_2000_1_0.01       0.7824155      0.7166606      0.7084537     0.9716130
+rf_500_5_0.01        0.7607751      0.6798385      0.6711677     0.9705631
+rf_1000_5_0.01       0.7901391      0.7089807      0.7033024     0.9527120
+rf_2000_5_0.01       0.8347936      0.7612837      0.7558811     0.9343416
+rf_500_10_0.01       0.6755690      0.5794961      0.5730013     0.9113627
+rf_1000_10_0.01      0.7142003      0.6275609      0.6207569     0.9321003
+rf_2000_10_0.01      0.7712229      0.7011294      0.6954766     0.9426341
+rf_500_1_0.001       0.5880223      0.5329518      0.5150626     0.9192188
+rf_1000_1_0.001      0.4637053      0.4232899      0.4242768     0.8287206
+rf_2000_1_0.001      0.6901307      0.6616246      0.6559401     0.9725900
+rf_500_5_0.001       0.6964832      0.6273603      0.6118740     0.9726566
+rf_1000_5_0.001      0.6867383      0.6140732      0.5976737     0.9747636
+rf_2000_5_0.001      0.7099568      0.6379128      0.6274401     0.9883130
+rf_500_10_0.001      0.5948277      0.5028308      0.4849675     0.9075330
+rf_1000_10_0.001     0.6056463      0.5167654      0.5009680     0.9218165
+rf_2000_10_0.001     0.6446947      0.5477295      0.5333614     0.9211955
+                 rf_1000_1_0.01 rf_2000_1_0.01 rf_500_5_0.01 rf_1000_5_0.01
+rf10                  0.9227544      0.9004330     0.9406018      0.9410834
+rf20                  0.9561937      0.9212267     0.9463290      0.9292081
+rf30                  0.9604103      0.9450868     0.9487980      0.9471847
+rf50                  0.9630354      0.9356572     0.9628813      0.9534574
+gamSpline31           0.8610492      0.8980915     0.8802742      0.8867119
+gamSpline50           0.8570062      0.8943077     0.8804081      0.8882766
+gamSpline100          0.8601904      0.8959176     0.8828184      0.8906780
+gamLoees_1            0.8480382      0.8778624     0.8681542      0.8728065
+rf_500_1_0.1          0.9746653      0.9927781     0.9719038      0.9742546
+rf_1000_1_0.1         0.9666889      0.9858119     0.9684271      0.9744287
+rf_2000_1_0.1         0.9643426      0.9822410     0.9702380      0.9769392
+rf_500_5_0.1          0.9193023      0.9162627     0.9391030      0.9615768
+rf_1000_5_0.1         0.8423403      0.8444041     0.8749186      0.9003701
+rf_2000_5_0.1         0.8683024      0.8624211     0.8814277      0.8981301
+rf_500_10_0.1         0.7602101      0.7824155     0.7607751      0.7901391
+rf_1000_10_0.1        0.6958666      0.7166606     0.6798385      0.7089807
+rf_2000_10_0.1        0.6891160      0.7084537     0.6711677      0.7033024
+rf_500_1_0.01         0.9870554      0.9716130     0.9705631      0.9527120
+rf_1000_1_0.01        1.0000000      0.9930927     0.9863508      0.9791202
+rf_2000_1_0.01        0.9930927      1.0000000     0.9814269      0.9767335
+rf_500_5_0.01         0.9863508      0.9814269     1.0000000      0.9948192
+rf_1000_5_0.01        0.9791202      0.9767335     0.9948192      1.0000000
+rf_2000_5_0.01        0.9630333      0.9579678     0.9800563      0.9921935
+rf_500_10_0.01        0.9571937      0.9663063     0.9632264      0.9644768
+rf_1000_10_0.01       0.9707392      0.9734240     0.9782151      0.9790554
+rf_2000_10_0.01       0.9708203      0.9788364     0.9695538      0.9689456
+rf_500_1_0.001        0.8973367      0.8829917     0.8602127      0.8194204
+rf_1000_1_0.001       0.8076052      0.7549979     0.7630085      0.7381622
+rf_2000_1_0.001       0.9361954      0.9113845     0.9007933      0.8705435
+rf_500_5_0.001        0.9647754      0.9469976     0.9570526      0.9305635
+rf_1000_5_0.001       0.9693454      0.9571174     0.9646975      0.9368830
+rf_2000_5_0.001       0.9882106      0.9754066     0.9847736      0.9657653
+rf_500_10_0.001       0.9293103      0.9345865     0.9219016      0.8970735
+rf_1000_10_0.001      0.9492624      0.9564064     0.9376433      0.9160303
+rf_2000_10_0.001      0.9535469      0.9649601     0.9600667      0.9456361
+                 rf_2000_5_0.01 rf_500_10_0.01 rf_1000_10_0.01 rf_2000_10_0.01
+rf10                  0.9328536      0.8669875       0.8982987       0.8908051
+rf20                  0.9161092      0.8864759       0.9236892       0.9102147
+rf30                  0.9510651      0.9000088       0.9462272       0.9477638
+rf50                  0.9440545      0.8920519       0.9195386       0.9249133
+gamSpline31           0.8765287      0.8597675       0.8733855       0.8703872
+gamSpline50           0.8782645      0.8591562       0.8698340       0.8646929
+gamSpline100          0.8806521      0.8626974       0.8732880       0.8674391
+gamLoees_1            0.8593310      0.8338314       0.8494604       0.8429277
+rf_500_1_0.1          0.9575346      0.9644621       0.9688820       0.9748505
+rf_1000_1_0.1         0.9582519      0.9622343       0.9658303       0.9680510
+rf_2000_1_0.1         0.9639904      0.9612792       0.9714522       0.9715717
+rf_500_5_0.1          0.9843439      0.9043014       0.9414702       0.9361688
+rf_1000_5_0.1         0.9393875      0.8190031       0.8736014       0.8872942
+rf_2000_5_0.1         0.9354071      0.7767646       0.8384214       0.8728014
+rf_500_10_0.1         0.8347936      0.6755690       0.7142003       0.7712229
+rf_1000_10_0.1        0.7612837      0.5794961       0.6275609       0.7011294
+rf_2000_10_0.1        0.7558811      0.5730013       0.6207569       0.6954766
+rf_500_1_0.01         0.9343416      0.9113627       0.9321003       0.9426341
+rf_1000_1_0.01        0.9630333      0.9571937       0.9707392       0.9708203
+rf_2000_1_0.01        0.9579678      0.9663063       0.9734240       0.9788364
+rf_500_5_0.01         0.9800563      0.9632264       0.9782151       0.9695538
+rf_1000_5_0.01        0.9921935      0.9644768       0.9790554       0.9689456
+rf_2000_5_0.01        1.0000000      0.9339066       0.9607394       0.9538378
+rf_500_10_0.01        0.9339066      1.0000000       0.9889085       0.9710249
+rf_1000_10_0.01       0.9607394      0.9889085       1.0000000       0.9882469
+rf_2000_10_0.01       0.9538378      0.9710249       0.9882469       1.0000000
+rf_500_1_0.001        0.7775551      0.8200286       0.8137284       0.8183606
+rf_1000_1_0.001       0.7204018      0.7495656       0.7701740       0.7777169
+rf_2000_1_0.001       0.8522858      0.8309200       0.8635292       0.8958014
+rf_500_5_0.001        0.9101223      0.9108158       0.9284434       0.9323230
+rf_1000_5_0.001       0.9112263      0.9234394       0.9377592       0.9390752
+rf_2000_5_0.001       0.9426961      0.9467665       0.9621016       0.9610550
+rf_500_10_0.001       0.8521536      0.9496532       0.9277380       0.9166180
+rf_1000_10_0.001      0.8717983      0.9663015       0.9520908       0.9387107
+rf_2000_10_0.001      0.9058704      0.9845471       0.9712512       0.9559575
+                 rf_500_1_0.001 rf_1000_1_0.001 rf_2000_1_0.001 rf_500_5_0.001
+rf10                  0.8011894       0.7093252       0.8621501      0.8748718
+rf20                  0.8541874       0.8596372       0.9390332      0.9426980
+rf30                  0.8321241       0.7780151       0.9049959      0.9215841
+rf50                  0.8743627       0.8397527       0.9466809      0.9539895
+gamSpline31           0.7278668       0.4160403       0.7009681      0.7707044
+gamSpline50           0.7239105       0.4056694       0.6902643      0.7669436
+gamSpline100          0.7335569       0.4162821       0.6943492      0.7730814
+gamLoees_1            0.7331798       0.4002670       0.6973665      0.7528293
+rf_500_1_0.1          0.8339361       0.6824663       0.8648591      0.9091176
+rf_1000_1_0.1         0.8064033       0.6580194       0.8441847      0.8890593
+rf_2000_1_0.1         0.7912629       0.6546652       0.8393785      0.8867820
+rf_500_5_0.1          0.6903578       0.6966781       0.7950154      0.8626352
+rf_1000_5_0.1         0.5869642       0.6287357       0.7406217      0.8007679
+rf_2000_5_0.1         0.6541620       0.6455842       0.8245575      0.8195782
+rf_500_10_0.1         0.5880223       0.4637053       0.6901307      0.6964832
+rf_1000_10_0.1        0.5329518       0.4232899       0.6616246      0.6273603
+rf_2000_10_0.1        0.5150626       0.4242768       0.6559401      0.6118740
+rf_500_1_0.01         0.9192188       0.8287206       0.9725900      0.9726566
+rf_1000_1_0.01        0.8973367       0.8076052       0.9361954      0.9647754
+rf_2000_1_0.01        0.8829917       0.7549979       0.9113845      0.9469976
+rf_500_5_0.01         0.8602127       0.7630085       0.9007933      0.9570526
+rf_1000_5_0.01        0.8194204       0.7381622       0.8705435      0.9305635
+rf_2000_5_0.01        0.7775551       0.7204018       0.8522858      0.9101223
+rf_500_10_0.01        0.8200286       0.7495656       0.8309200      0.9108158
+rf_1000_10_0.01       0.8137284       0.7701740       0.8635292      0.9284434
+rf_2000_10_0.01       0.8183606       0.7777169       0.8958014      0.9323230
+rf_500_1_0.001        1.0000000       0.7814383       0.9135532      0.9351259
+rf_1000_1_0.001       0.7814383       1.0000000       0.8874782      0.8670793
+rf_2000_1_0.001       0.9135532       0.8874782       1.0000000      0.9582864
+rf_500_5_0.001        0.9351259       0.8670793       0.9582864      1.0000000
+rf_1000_5_0.001       0.9398004       0.8380708       0.9512794      0.9970340
+rf_2000_5_0.001       0.9178338       0.8382146       0.9525197      0.9889030
+rf_500_10_0.001       0.9064368       0.7957923       0.8647214      0.9486012
+rf_1000_10_0.001      0.9154490       0.7719104       0.8705595      0.9438296
+rf_2000_10_0.001      0.8753774       0.7410780       0.8518460      0.9375258
+                 rf_1000_5_0.001 rf_2000_5_0.001 rf_500_10_0.001
+rf10                   0.8790892       0.9184140       0.7745922
+rf20                   0.9420337       0.9639412       0.8582442
+rf30                   0.9218703       0.9452244       0.8326443
+rf50                   0.9477269       0.9699279       0.8573964
+gamSpline31            0.8032763       0.8255871       0.7747737
+gamSpline50            0.7992986       0.8219308       0.7728887
+gamSpline100           0.8042077       0.8260319       0.7765441
+gamLoees_1             0.7866417       0.8142766       0.7383809
+rf_500_1_0.1           0.9244647       0.9484713       0.9117901
+rf_1000_1_0.1          0.9063737       0.9365202       0.8952496
+rf_2000_1_0.1          0.9042965       0.9354444       0.8861662
+rf_500_5_0.1           0.8583178       0.8921327       0.8002443
+rf_1000_5_0.1          0.7917909       0.8211148       0.7114317
+rf_2000_5_0.1          0.8100555       0.8431671       0.6844576
+rf_500_10_0.1          0.6867383       0.7099568       0.5948277
+rf_1000_10_0.1         0.6140732       0.6379128       0.5028308
+rf_2000_10_0.1         0.5976737       0.6274401       0.4849675
+rf_500_1_0.01          0.9747636       0.9883130       0.9075330
+rf_1000_1_0.01         0.9693454       0.9882106       0.9293103
+rf_2000_1_0.01         0.9571174       0.9754066       0.9345865
+rf_500_5_0.01          0.9646975       0.9847736       0.9219016
+rf_1000_5_0.01         0.9368830       0.9657653       0.8970735
+rf_2000_5_0.01         0.9112263       0.9426961       0.8521536
+rf_500_10_0.01         0.9234394       0.9467665       0.9496532
+rf_1000_10_0.01        0.9377592       0.9621016       0.9277380
+rf_2000_10_0.01        0.9390752       0.9610550       0.9166180
+rf_500_1_0.001         0.9398004       0.9178338       0.9064368
+rf_1000_1_0.001        0.8380708       0.8382146       0.7957923
+rf_2000_1_0.001        0.9512794       0.9525197       0.8647214
+rf_500_5_0.001         0.9970340       0.9889030       0.9486012
+rf_1000_5_0.001        1.0000000       0.9925761       0.9585736
+rf_2000_5_0.001        0.9925761       1.0000000       0.9475220
+rf_500_10_0.001        0.9585736       0.9475220       1.0000000
+rf_1000_10_0.001       0.9591744       0.9566430       0.9866282
+rf_2000_10_0.001       0.9545094       0.9597292       0.9812691
+                 rf_1000_10_0.001 rf_2000_10_0.001
+rf10                    0.8201014        0.8430594
+rf20                    0.8835619        0.8821997
+rf30                    0.8817101        0.8822022
+rf50                    0.8721727        0.8823227
+gamSpline31             0.8371721        0.8644175
+gamSpline50             0.8326810        0.8630433
+gamSpline100            0.8376176        0.8657861
+gamLoees_1              0.8127326        0.8371126
+rf_500_1_0.1            0.9374821        0.9574965
+rf_1000_1_0.1           0.9232677        0.9493303
+rf_2000_1_0.1           0.9181450        0.9463403
+rf_500_5_0.1            0.8207158        0.8600408
+rf_1000_5_0.1           0.7225976        0.7748558
+rf_2000_5_0.1           0.7010169        0.7432957
+rf_500_10_0.1           0.6056463        0.6446947
+rf_1000_10_0.1          0.5167654        0.5477295
+rf_2000_10_0.1          0.5009680        0.5333614
+rf_500_1_0.01           0.9218165        0.9211955
+rf_1000_1_0.01          0.9492624        0.9535469
+rf_2000_1_0.01          0.9564064        0.9649601
+rf_500_5_0.01           0.9376433        0.9600667
+rf_1000_5_0.01          0.9160303        0.9456361
+rf_2000_5_0.01          0.8717983        0.9058704
+rf_500_10_0.01          0.9663015        0.9845471
+rf_1000_10_0.01         0.9520908        0.9712512
+rf_2000_10_0.01         0.9387107        0.9559575
+rf_500_1_0.001          0.9154490        0.8753774
+rf_1000_1_0.001         0.7719104        0.7410780
+rf_2000_1_0.001         0.8705595        0.8518460
+rf_500_5_0.001          0.9438296        0.9375258
+rf_1000_5_0.001         0.9591744        0.9545094
+rf_2000_5_0.001         0.9566430        0.9597292
+rf_500_10_0.001         0.9866282        0.9812691
+rf_1000_10_0.001        1.0000000        0.9905767
+rf_2000_10_0.001        0.9905767        1.0000000
+> 
+> greedy_ensemble <- caretEnsemble(model_list, optFUN=greedOptGini)
+> summary(greedy_ensemble)
+The following models were ensembled: rf20, rf30, gamSpline100, rf_2000_1_0.1, rf_500_5_0.1, rf_1000_5_0.01, rf_2000_5_0.01, rf_500_10_0.01, rf_1000_10_0.01 
+They were weighted: 
+0.08 0.06 0.06 0.01 0.05 0.13 0.45 0.13 0.03
+The resulting RMSE is: 3.775
+The fit for each individual model on the RMSE is: 
+          method   metric  metricSD
+            rf20 3.810880 0.1119532
+            rf30 3.814490 0.1091557
+    gamSpline100 3.863440 0.1203940
+   rf_2000_1_0.1 3.805786 0.1111217
+    rf_500_5_0.1 3.820060 0.1016837
+  rf_1000_5_0.01 3.780850 0.1060264
+  rf_2000_5_0.01 3.783704 0.1041247
+  rf_500_10_0.01 3.816296 0.1065557
+ rf_1000_10_0.01 3.830187 0.1034271
+> evalEnsemble(greedy_ensemble, NormalizedGini)
+[1] 0.3859297
+       rf      rf.1 gamSpline   xgbTree xgbTree.1 xgbTree.2 xgbTree.3 xgbTree.4 
+0.3540378 0.3524944 0.3258668 0.3547826 0.3666428 0.3816524 0.3831599 0.3702891 
+xgbTree.5 
+0.3643497 
+> test_pred <-predict(greedy_ensemble,newdata=x_test)
+Loading required package: randomForest
+randomForest 4.6-10
+Type rfNews() to see new features/changes/bug fixes.
+Loading required package: gam
+Loading required package: splines
+Loaded gam 1.09.1
+
+Warning message:
+In predict.lm(object, newdata, se.fit, scale = 1, type = ifelse(type ==  :
+  prediction from a rank-deficient fit may be misleading
+> result <- data.frame(Id=test_data$Id, Hazard=test_pred)
+> write.csv(result, file.path('output','submission.csv'), row.names=FALSE, quote=FALSE)
+> 
+> 

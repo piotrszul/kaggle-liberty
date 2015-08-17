@@ -1,0 +1,266 @@
+
+R version 3.1.3 (2015-03-09) -- "Smooth Sidewalk"
+Copyright (C) 2015 The R Foundation for Statistical Computing
+Platform: x86_64-unknown-linux-gnu (64-bit)
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+  Natural language support but running in an English locale
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+> library(caret)
+Loading required package: lattice
+Loading required package: ggplot2
+> library(caretEnsemble)
+> library(lattice)
+> library(mlbench)
+> library(doParallel)
+Loading required package: foreach
+Loading required package: iterators
+Loading required package: parallel
+> 
+> getModelName<-function(modelSpec) {
++     paste(unlist(modelSpec), sep='_', collapse="_")
++ }
+> 
+> #"NormalizedGini" is the other half of the metric. This function does most of the work, though
+> SumModelGini <- function(solution, submission) {
++     df = data.frame(solution = solution, submission = submission)
++     df <- df[order(df$submission, decreasing = TRUE),]
++     df
++     df$random = (1:nrow(df))/nrow(df)
++     df
++     totalPos <- sum(df$solution)
++     df$cumPosFound <- cumsum(df$solution) # this will store the cumulative number of positive examples found (used for computing "Model Lorentz")
++     df$Lorentz <- df$cumPosFound / totalPos # this will store the cumulative proportion of positive examples found ("Model Lorentz")
++     df$Gini <- df$Lorentz - df$random # will store Lorentz minus random
++     #print(df)
++     return(sum(df$Gini))
++ }
+> 
+> NormalizedGini <- function(solution, submission) {
++     SumModelGini(solution, submission) / SumModelGini(solution, solution)
++ }
+> 
+> greedOptGini <- function(X, Y, iter = 100L){
++     
++     N           <- ncol(X)
++     weights     <- rep(0L, N)
++     pred        <- 0 * X
++     sum.weights <- 0L
++     
++     while(sum.weights < iter) {
++         
++         sum.weights   <- sum.weights + 1L
++         pred          <- (pred + X) * (1L / sum.weights)
++         errors        <- apply(pred, MARGIN=2,function(x) {NormalizedGini(Y,x)})
++         best          <- which.max(errors)
++         weights[best] <- weights[best] + 1L
++         pred          <- pred[, best] * sum.weights
++     }
++     return(weights)
++ }
+> 
+> printf <- function(...) invisible(print(sprintf(...)))
+> 
+> train_data<- read.csv('data/train.csv', header=TRUE)
+> test_data <- read.csv('data/test.csv', header=TRUE)
+> #train_set <- subset(train_data,select=-c(Id,T1_V4,T1_V5,T1_V15,T1_V16, T1_V11))
+> trainIdx <-createDataPartition(train_data$Hazard, p=0.01, list=FALSE)
+> 
+> train_set <- subset(train_data,select=-c(Id))
+> 
+> set.seed(37)
+> 
+> giniSummary <-function (data, lev = NULL, model = NULL) {
++ 
++     SumModelGini <- function(solution, submission) {
++         df = data.frame(solution = solution, submission = submission)
++         df <- df[order(df$submission, decreasing = TRUE),]
++         df
++         df$random = (1:nrow(df))/nrow(df)
++         df
++         totalPos <- sum(df$solution)
++         df$cumPosFound <- cumsum(df$solution) # this will store the cumulative number of positive examples found (used for computing "Model Lorentz")
++         df$Lorentz <- df$cumPosFound / totalPos # this will store the cumulative proportion of positive examples found ("Model Lorentz")
++         df$Gini <- df$Lorentz - df$random # will store Lorentz minus random
++         #print(df)
++         return(sum(df$Gini))
++     }
++     
++     NormalizedGini <- function(solution, submission) {
++         SumModelGini(solution, submission) / SumModelGini(solution, solution)
++     }    
++     
++     c(gini=NormalizedGini(data$obs,data$pred))
++ }
+> 
+> trControl <- trainControl(method="cv",
++                           number=10,
++                           verboseIter=TRUE,
++                           classProbs = FALSE,
++                           summaryFunction = giniSummary,
++                           savePredictions=TRUE,
++                           index = createFolds(train_set$Hazard,k=10, list=TRUE, returnTrain=TRUE),
++                           allowParallel = TRUE
++ )
+> #                         allowParallel = FALSE)
+> 
+> 
+> caretModelSpecEx<-function(method,tuneGrid,...) {
++     l <- apply(tuneGrid,MARGIN=1, FUN=function(x) {caretModelSpec(method, tuneGrid=as.data.frame(as.list(x)),...)})
++     names(l) <-apply(tuneGrid, MARGIN=1, function(r) {paste(c('rf', r), collapse='_' )})
++     l
++ }
+> 
+> 
+> model_specs <- c(
++   list(
++ #    rf5=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=5), ntree=50),
++    # rf10=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=10), ntree=150),        
++    # rf20=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=20), ntree=150),
++ #    rf21=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=20), ntree=51),    
++    # rf30=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=30), ntree=150),        
++    # rf50=caretModelSpec(method='rf', tuneGrid=data.frame(mtry=50), ntree=150),        
++ #    gamSpline10=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=10)),
++ #    gamSpline20=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=20)),
++ #    gamSpline30=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=30)),      
++    # gamSpline31=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=31)),          
++    # gamSpline50=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=50)),              
++    # gamSpline100=caretModelSpec(method='gamSpline', tuneGrid = data.frame(df=100)),              
++ 
++ #    lasso0.9=caretModelSpec(method='lasso', tuneGrid = data.frame(fraction=0.9)),      
++ #    lasso0.91=caretModelSpec(method='lasso', tuneGrid = data.frame(fraction=0.91)),      
++ #    lasso0.5=caretModelSpec(method='lasso', tuneGrid = data.frame(fraction=0.5)),      
++ #    lasso0.2=caretModelSpec(method='lasso', tuneGrid = data.frame(fraction=0.2)),
++     gamLoees_1=caretModelSpec(method='gamLoess', tuneGrid = data.frame(span = .5, degree = 1))
++     ),
++ #    gamLoees_2=caretModelSpec(method='gamLoess', tuneGrid = data.frame(span = .5, degree = 2)),
++ #    xgbTree=caretModelSpec(method='xgbTree', tuneGrid = data.frame(nrounds = 500, max_depth = 5, eta=0.001)),
++     #xgbTree=caretModelSpec(method='xgbTree', tuneGrid = data.frame(nrounds = 500, max_depth = 5, eta=0.01)),
++     #xgbTree=caretModelSpec(method='xgbTree', tuneGrid = data.frame(nrounds = 1000, max_depth = 10, eta=0.001)),
++     #xgbTree=caretModelSpec(method='xgbTree', tuneGrid = data.frame(nrounds = 1000, max_depth = 10, eta=0.005)),
++     #xgbTree=caretModelSpec(method='xgbTree', tuneGrid = data.frame(nrounds = 1000, max_depth = 15, eta=0.005))
++     caretModelSpecEx(method='xgbTree', tuneGrid = expand.grid(nrounds = c(500,1000,2000), max_depth = 5, eta=c(0.1,0.01,0.001)))
++ #    krlsPoly2_01=caretModelSpec(method='krlsPoly', tuneGrid = data.frame(degree=2,lambda=0.01)),        
++ #    krlsPoly2_001=caretModelSpec(method='krlsPoly', tuneGrid = data.frame(degree=2,lambda=0.001)),        
++ #    krlsPoly3_01=caretModelSpec(method='krlsPoly', tuneGrid = data.frame(degree=3,lambda=0.01)),        
++ #    krlsPoly3_001=caretModelSpec(method='krlsPoly', tuneGrid = data.frame(degree=3,lambda=0.001))           
++ )
+> 
+> y<-train_set$Hazard
+> dummies <- dummyVars(~ ., data = train_set[,-1])
+> x_train = predict(dummies, newdata = train_set[,-1])
+> x_test = predict(dummies, newdata = test_data[,-1])
+> 
+> 
+> cl <- makeCluster(10, outfile="")
+starting worker pid=4798 on localhost:11065 at 20:35:06.200
+starting worker pid=4807 on localhost:11065 at 20:35:06.443
+starting worker pid=4816 on localhost:11065 at 20:35:06.692
+starting worker pid=4825 on localhost:11065 at 20:35:06.938
+starting worker pid=4834 on localhost:11065 at 20:35:07.192
+starting worker pid=4843 on localhost:11065 at 20:35:07.447
+starting worker pid=4852 on localhost:11065 at 20:35:07.702
+starting worker pid=4861 on localhost:11065 at 20:35:07.947
+starting worker pid=4870 on localhost:11065 at 20:35:08.200
+starting worker pid=4879 on localhost:11065 at 20:35:08.439
+> registerDoParallel(cl)
+> 
+> model_list <- caretList(x_train,
++     y,
++     trControl=trControl,
++     metric='gini',
++     tuneList=model_specs
++ )
+[1] "Loading model:cache/gamLoess_0.5_1"
+[1] "Loading model:cache/xgbTree_500_5_0.1"
+[1] "Loading model:cache/xgbTree_1000_5_0.1"
+[1] "Loading model:cache/xgbTree_2000_5_0.1"
+[1] "Loading model:cache/xgbTree_500_5_0.01"
+[1] "Loading model:cache/xgbTree_1000_5_0.01"
+[1] "Loading model:cache/xgbTree_2000_5_0.01"
+[1] "Loading model:cache/xgbTree_500_5_0.001"
+[1] "Loading model:cache/xgbTree_1000_5_0.001"
+[1] "Loading model:cache/xgbTree_2000_5_0.001"
+> 
+> stopCluster(cl)
+> 
+> 
+> xyplot(resamples(model_list))
+> modelCor(resamples(model_list))
+                gamLoees_1 rf_500_5_0.1 rf_1000_5_0.1 rf_2000_5_0.1
+gamLoees_1       1.0000000    0.8146566     0.7530349     0.7731732
+rf_500_5_0.1     0.8146566    1.0000000     0.9761944     0.9386243
+rf_1000_5_0.1    0.7530349    0.9761944     1.0000000     0.9570625
+rf_2000_5_0.1    0.7731732    0.9386243     0.9570625     1.0000000
+rf_500_5_0.01    0.8681542    0.9391030     0.8749186     0.8814277
+rf_1000_5_0.01   0.8728065    0.9615768     0.9003701     0.8981301
+rf_2000_5_0.01   0.8593310    0.9843439     0.9393875     0.9354071
+rf_500_5_0.001   0.7528293    0.8626352     0.8007679     0.8195782
+rf_1000_5_0.001  0.7866417    0.8583178     0.7917909     0.8100555
+rf_2000_5_0.001  0.8142766    0.8921327     0.8211148     0.8431671
+                rf_500_5_0.01 rf_1000_5_0.01 rf_2000_5_0.01 rf_500_5_0.001
+gamLoees_1          0.8681542      0.8728065      0.8593310      0.7528293
+rf_500_5_0.1        0.9391030      0.9615768      0.9843439      0.8626352
+rf_1000_5_0.1       0.8749186      0.9003701      0.9393875      0.8007679
+rf_2000_5_0.1       0.8814277      0.8981301      0.9354071      0.8195782
+rf_500_5_0.01       1.0000000      0.9948192      0.9800563      0.9570526
+rf_1000_5_0.01      0.9948192      1.0000000      0.9921935      0.9305635
+rf_2000_5_0.01      0.9800563      0.9921935      1.0000000      0.9101223
+rf_500_5_0.001      0.9570526      0.9305635      0.9101223      1.0000000
+rf_1000_5_0.001     0.9646975      0.9368830      0.9112263      0.9970340
+rf_2000_5_0.001     0.9847736      0.9657653      0.9426961      0.9889030
+                rf_1000_5_0.001 rf_2000_5_0.001
+gamLoees_1            0.7866417       0.8142766
+rf_500_5_0.1          0.8583178       0.8921327
+rf_1000_5_0.1         0.7917909       0.8211148
+rf_2000_5_0.1         0.8100555       0.8431671
+rf_500_5_0.01         0.9646975       0.9847736
+rf_1000_5_0.01        0.9368830       0.9657653
+rf_2000_5_0.01        0.9112263       0.9426961
+rf_500_5_0.001        0.9970340       0.9889030
+rf_1000_5_0.001       1.0000000       0.9925761
+rf_2000_5_0.001       0.9925761       1.0000000
+> 
+> greedy_ensemble <- caretEnsemble(model_list, optFUN=greedOptGini)
+> summary(greedy_ensemble)
+The following models were ensembled: gamLoees_1, rf_500_5_0.1, rf_1000_5_0.1, rf_500_5_0.01, rf_1000_5_0.01, rf_2000_5_0.01 
+They were weighted: 
+0.02 0.05 0.04 0.1 0.3 0.49
+The resulting RMSE is: 3.7794
+The fit for each individual model on the RMSE is: 
+         method   metric   metricSD
+     gamLoees_1 3.869524 0.11948094
+   rf_500_5_0.1 3.820060 0.10168370
+  rf_1000_5_0.1 3.869541 0.09995078
+  rf_500_5_0.01 3.793438 0.10963499
+ rf_1000_5_0.01 3.780850 0.10602641
+ rf_2000_5_0.01 3.783704 0.10412470
+> evalEnsemble(greedy_ensemble, NormalizedGini)
+[1] 0.3840459
+ gamLoess   xgbTree xgbTree.1 xgbTree.2 xgbTree.3 xgbTree.4 
+0.3187696 0.3666428 0.3474596 0.3737379 0.3816524 0.3831599 
+> test_pred <-predict(greedy_ensemble,newdata=x_test)
+Loading required package: gam
+Loading required package: splines
+Loaded gam 1.09.1
+
+Loading required package: xgboost
+Loading required package: plyr
+Warning message:
+In predict.lm(object, newdata, se.fit, scale = 1, type = ifelse(type ==  :
+  prediction from a rank-deficient fit may be misleading
+> result <- data.frame(Id=test_data$Id, Hazard=test_pred)
+> write.csv(result, file.path('output','submission.csv'), row.names=FALSE, quote=FALSE)
+> 
+> 
