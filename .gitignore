@@ -3,3 +3,5 @@ cache
 output
 .Rhistory
 slurm*
+cache.old
+target
