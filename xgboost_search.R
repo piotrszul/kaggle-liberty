@@ -43,6 +43,9 @@ nthread <- 16
 
 train_data <- read.csv('data/train.csv')
 set.seed(100)
+folds <- createFolds(train_data$Hazard,k=nfold, list=TRUE, returnTrain=FALSE)
+set.seed(100)
+
 cov_and_res  = subset(train_data,select=-c(Id))
 trainSet <- cov_and_res
 y_train<-trainSet$Hazard
@@ -85,12 +88,14 @@ techParams <- list(
             eval_metric = evalerror)
 
 params <- c(taskParams, techParams)
-cv <-xgb.cv(params = params, data = trainData,nrounds = nrounds, nfold = nfold, early.stop.round = 200,  maximize = TRUE, nthread=16)
-min_nrounds <- which.max(as.numeric(cv$test.xxxx.mean))
-result <- data.frame(rmse = as.numeric(cv$test.xxxx.mean[min_nrounds]), 
+cv <-xgb.cv(params = params, data = trainData,nrounds = nrounds, folds = folds, prediction = TRUE, early.stop.round = 200,  maximize = TRUE, nthread=16)
+min_nrounds <- which.max(as.numeric(cv$dt$test.xxxx.mean))
+result <- data.frame(cv$dt[min_nrounds], 
                     min_nrounds = min_nrounds, taskParams, id=taskId)         
 print(result)
 write.table(result, paste('target/task/out_', taskId, sep=''), row.names=FALSE, quote=FALSE, col.names=FALSE)
+write.table(t(cv$pred), paste('target/task/pred_', taskId, sep=''), row.names=FALSE, quote=FALSE, col.names=FALSE)
+
 
 
 
