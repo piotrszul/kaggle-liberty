@@ -38,7 +38,7 @@ if (is.na(taskId)) {
 }
 
 nrounds <- 15000
-nfold <- 10 
+nfold <- 5 
 nthread <- 16
 
 train_data <- read.csv('data/train.csv')
@@ -63,11 +63,17 @@ trainData <- xgb.DMatrix(X_train_exp, label = y_train)
 #5.paramGrid <- expand.grid(max.depth=c(5,6,7,8,9,10,11,12), eta=c(0.001), subsample=c(0.85, 0.75, 0.65), colsample_bytree=c(1,0.75, 0.6), min_child_weight=c(15,20,25))
 #6.paramGrid <- expand.grid(max.depth=c(8,9,10,11), eta=c(0.001), subsample=c(0.8, 0.75,0.7), colsample_bytree=c(0.75, 0.6,0.5), min_child_weight=c(25,30), gamma=c(0,1))
 #7.paramGrid <- expand.grid(max.depth=c(8,9,10), eta=c(0.001), subsample=c(0.8, 0.75), colsample_bytree=c(0.65, 0.6,0.55), min_child_weight=c(30,35,40), gamma=c(1,5,10))
-paramGrid <- expand.grid(max.depth=c(8,9,10), eta=c(0.001), subsample=c(0.8, 0.75), colsample_bytree=c(0.65, 0.6,0.55), min_child_weight=c(30,35,40), gamma=c(1,5,10))
+#8.paramGrid <- expand.grid(max.depth=c(8,9,10), eta=c(0.001), subsample=c(0.8, 0.75), colsample_bytree=c(0.65, 0.6,0.55), min_child_weight=c(30,35,40), gamma=c(1,5,10))
 
+paramGrid <- expand.grid(max.depth=c(1,5,10,20,40), 
+                         eta=c(0.1, 0.01, 0.001), 
+                         subsample=c(1,0.66, 0.33), 
+                         colsample_bytree=c(1, 0.66, 0.33), 
+                         min_child_weight=c(1, 30, 60), 
+                         gamma=c(0,10))
 str(paramGrid)
 taskParams <- as.list(paramGrid[taskId,])
-
+taskName <-paste(names(taskParams), taskParams, collapse='+', sep='_')
 evalerror <- function(preds, dtrain) {
     labels <- getinfo(dtrain, "label")
     err <- NormalizedGini(labels, preds)
@@ -78,13 +84,10 @@ evalerror <- function(preds, dtrain) {
 print("Running task")
 print(taskId)
 print(taskParams)
-
+print(taskName)
 
 techParams <- list(
-#	     nthread= nthread,
             objective = "reg:linear", 
-#            early.stop.round = 10,
-#            maximize = TRUE,
             eval_metric = evalerror)
 
 params <- c(taskParams, techParams)
@@ -93,8 +96,13 @@ min_nrounds <- which.max(as.numeric(cv$dt$test.xxxx.mean))
 result <- data.frame(cv$dt[min_nrounds], 
                     min_nrounds = min_nrounds, taskParams, id=taskId)         
 print(result)
-write.table(result, paste('target/task/out_', taskId, sep=''), row.names=FALSE, quote=FALSE, col.names=FALSE)
-write.table(t(cv$pred), paste('target/task/pred_', taskId, sep=''), row.names=FALSE, quote=FALSE, col.names=FALSE)
+write.table(result, paste('target/task/out-', taskName, sep=''), row.names=FALSE, quote=FALSE, col.names=FALSE)
+save(cv$pred, file=paste('target/task/pred-', taskName, sep=''), compress='gzip')
+
+gini <-sapply(folds,function(f){NormalizedGini(y_train[f], cv$pred[f])})
+mean(gini)
+sd(gini)
+
 
 
 
