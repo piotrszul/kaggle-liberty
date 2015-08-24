@@ -39,7 +39,7 @@ if (is.na(taskId)) {
 
 nrounds <- 15000
 nfold <- 5 
-nthread <- 16
+nthread <- 20
 
 train_data <- read.csv('data/train.csv')
 set.seed(100)
@@ -97,7 +97,7 @@ result <- data.frame(cv$dt[min_nrounds],
                     min_nrounds = min_nrounds, taskParams, id=taskId)         
 print(result)
 write.table(result, paste('target/task/out-', taskName, sep=''), row.names=FALSE, quote=FALSE, col.names=FALSE)
-save(cv$pred, file=paste('target/task/pred-', taskName, sep=''), compress='gzip')
+save(cv, file=paste('target/task/pred-', taskName, sep=''), compress='gzip')
 
 gini <-sapply(folds,function(f){NormalizedGini(y_train[f], cv$pred[f])})
 mean(gini)
