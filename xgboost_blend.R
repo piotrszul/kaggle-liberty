@@ -32,28 +32,82 @@ NormalizedGini <- function(solution, submission) {
 }
 
 train_data <- read.csv('data/train.csv')
-model <- read.table('target/output1.txt', header = FALSE, sep = ' ', as.is=TRUE)
-input <-as.data.frame(t(model))
+models <- dir('target/task', pattern='pred-.*')
+input <-lapply(models, function(f) { load(file.path('target', 'task', f)); cv$pred })
+names(input) <- models
+input <- data.frame(input)
 ref <- train_data$Hazard
-metrics <- sapply(input, function(x){NormalizedGini(ref, x) })
-desc <- order(metrics, decreasing = TRUE)
-model_num <- 5
-selection <- desc[1:model_num]
-weights <- rep(0, length.out=length(metrics))
-weights[selection] <- 1
-sums <- apply(input[,selection], 1, sum)
-pred <- sums/model_num
-NormalizedGini(ref, pred)
 
-for (i in 1:500 ) {
-    model_num <- model_num + 1
-    metrics <- sapply(input, function(x){NormalizedGini(ref, (x + sums)/model_num) })
-    sel <- which.max(metrics)
-    weights[sel] <- weights[sel] + 1
-    sums <- sums + input[,sel]
-    pred <- sums/model_num
-    print(NormalizedGini(ref, pred))
+set.seed(100)
+folds <- createFolds(train_data$Hazard,k=nfold, list=TRUE, returnTrain=FALSE)
+
+blend_ensamble <- function(data,reference,iter=500,init=10,sample=1, prune=0.02) {
+#    data <-as.data.frame(lapply(data, function(l) {
+#        ord <- rep(0, lenght.out =nrow(data))
+#        ord[order(l)] = 1:nrow(data)
+#        ord
+#        }))
+    #data <- as.data.frame(lapply(data, function(x) {exp(x)}))
+    no_models <- ncol(data)
+    #data<-as.matrix(data)
+    model_num <-init
+    single_model_metrics <- sapply(data, function(x){NormalizedGini(reference, x) })
+    sm_desc_ord  <-order(single_model_metrics, decreasing = TRUE)
+    initial_sm <- sm_desc_ord[1:model_num]
+    weights <- rep(0, length.out=length(single_model_metrics))
+    gini <-rep(0,length.out=iter)
+    
+    # assign initial weights
+    weights[initial_sm] <- 1
+    sums <- apply(data[, initial_sm], 1,sum)
+    avg_prediction <- sums/model_num
+    avg_gini <-NormalizedGini(reference, avg_prediction)
+    print("Initial gini: ")
+    print(avg_gini)
+    gini[1] = avg_gini
+    
+    for (i in 2:iter ) {
+        model_num <- model_num + 1
+        metrics <- sapply(input, function(x) {
+            if (runif(1)< sample) {
+                SumModelGini(reference, (x + sums)/model_num) 
+            } else {
+                0
+            }
+        })
+        sel <- which.max(metrics)
+        weights[sel] <- weights[sel] + 1
+        sums <- sums + data[,sel]
+        avg_prediction <- sums/model_num
+        avg_gini <-NormalizedGini(reference, avg_prediction)
+        print(i)
+        print(single_model_metrics[sel])
+        print(avg_gini)
+        gini[i] = avg_gini
+    }
+    
+    #prune 
+    pruned_weights <- weights;
+    pruned_weights[pruned_weights<prune*length(pruned_weights)] =0
+    avg_pred <- apply(data, MARGIN=1, FUN=function(x) {sum(x*pruned_weights)/sum(pruned_weights)} )
+    
+    list(weights=weights, gini=gini, metric=avg_gini, pruned_weights=pruned_weights, 
+         pruned_gini=NormalizedGini(reference, avg_pred) )
 }
+
+
+evalEnsamble <- function(weights, labels, predictions, useFolds = NULL) {
+    normalizedWeights <- weights/sum(weights)
+    ensamblePrediction <- apply(predictions, MARGIN=1, FUN=function(r) { sum(normalizedWeights*r)})
+    if (is.null(useFolds)) {
+        NormalizedGini(labels, ensamblePrediction)
+    } else {
+        mean(sapply(folds, function(f){ NormalizedGini(labels[f], ensamblePrediction[f]) }))
+    }
+}
+
+
+res <- blend_ensamble(input, ref, iter=200, sample=0.5, prune=0.01)
 
 
 
