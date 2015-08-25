@@ -39,7 +39,7 @@ if (is.na(taskId)) {
 
 nrounds <- 15000
 nfold <- 5 
-nthread <- 20
+nthread <- 16
 
 train_data <- read.csv('data/train.csv')
 set.seed(100)

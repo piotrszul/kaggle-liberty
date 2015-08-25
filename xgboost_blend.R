@@ -32,11 +32,18 @@ NormalizedGini <- function(solution, submission) {
 }
 
 train_data <- read.csv('data/train.csv')
-models <- dir('target/task', pattern='pred-.*')
-input <-lapply(models, function(f) { load(file.path('target', 'task', f)); cv$pred })
-names(input) <- models
+modelsFiles <- dir('target/task', pattern='pred-.*')
+modelIds <-sapply(strsplit(modelsFiles, '-'), function(x){x[2]})
+modelIds <- modelIds[order(modelIds)]
+
+input <-lapply(modelIds, function(f) { load(file.path('target', 'task', paste('pred',f, sep='-'))); cv$pred })
+names(input) <- modelIds
 input <- data.frame(input)
 ref <- train_data$Hazard
+
+modelParams <- do.call("rbind", lapply(modelIds, function(f) {
+    read.table(file.path('target', 'task', paste('out',f, sep='-')), sep=' ')} ))
+rownames(modelParams) <- modelIds
 
 set.seed(100)
 folds <- createFolds(train_data$Hazard,k=nfold, list=TRUE, returnTrain=FALSE)
@@ -92,7 +99,7 @@ blend_ensamble <- function(data,reference,iter=500,init=10,sample=1, prune=0.02)
     avg_pred <- apply(data, MARGIN=1, FUN=function(x) {sum(x*pruned_weights)/sum(pruned_weights)} )
     
     list(weights=weights, gini=gini, metric=avg_gini, pruned_weights=pruned_weights, 
-         pruned_gini=NormalizedGini(reference, avg_pred) )
+         pruned_gini=NormalizedGini(reference, avg_pred), single_model_metrics = single_model_metrics )
 }
 
 
@@ -108,7 +115,9 @@ evalEnsamble <- function(weights, labels, predictions, useFolds = NULL) {
 
 
 res <- blend_ensamble(input, ref, iter=200, sample=0.5, prune=0.01)
-
-
-
+colnames(modelParams) <- c('train.gini.mean', 'train.gini.sd', 'test.gini.mean', 'test.gini.sd', 'nrounds', 
+    'max.depth', 'eta', 'subsample', 'colsample_bytree', 'min_child_weight','gamma')
+ensambleParams <-data.frame(modelParams, weights=res$weights, pruned_weights=res$pruned_weights, 
+                            single_model_metrics = res$single_model_metrics)
+write.csv(ensambleParams, file.path('target','ensamble.csv'), quote=FALSE)
 
