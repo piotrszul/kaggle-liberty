@@ -1,18 +1,6 @@
 library(xgboost)
 library(caret)
 
-multiLogLoss <-function (data,label) {
-    print("multiLogLoss")
-    sumProbs <- apply(data,1, sum)
-    classProb <- apply(cbind(as.numeric(label), data),1,function(x) {x[x[1]+1]})
-    scaledProb <- classProb/sumProbs
-    adjustedProb <- pmax(pmin(scaledProb,1-(1e-15)),1e-15)
-    logLoss = - mean(log(adjustedProb))
-    print(logLoss)
-    c(LOGLOSS=logLoss)
-}
-
-#"NormalizedGini" is the other half of the metric. This function does most of the work, though
 SumModelGini <- function(solution, submission) {
     df = data.frame(solution = solution, submission = submission)
     df <- df[order(df$submission, decreasing = TRUE),]
