@@ -9,6 +9,6 @@
 module load R/3.2.1
 module load gcc/4.9.2
 
-R --vanilla --args $SLURM_ARRAY_TASK_ID  < xgboost_search.R
+R --vanilla --args $SLURM_ARRAY_TASK_ID  < xgboost_train.R
 
 

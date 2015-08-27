@@ -52,8 +52,8 @@ trainData <- xgb.DMatrix(X_train_exp, label = y_train)
 #commandArgs
 
 
-ensambleParams <- read.csv(file.path('target','ensamble.csv'))
-selectedModelParams = ensambleParams[ensambleParams$weights>0,]
+ensambleParams <- read.csv(file.path('target','ensamble-rmse.csv'))
+selectedModelParams = ensambleParams[ensambleParams$pruned_weights>0,]
 print("Models selected:")
 print(nrow(selectedModelParams))
 
@@ -69,8 +69,8 @@ print(taskName)
 print(thisModelParams)
 
 techParams <- list(
-            objective = "reg:linear", 
-            eval_metric = evalerror)
+            objective = "reg:linear"
+            )
 
 params <- c(taskParams, techParams)
 model <-xgb.train(params = params, data = trainData,nrounds = nrounds, nthreads=16)
