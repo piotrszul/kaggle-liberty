@@ -19,6 +19,12 @@ NormalizedGini <- function(solution, submission) {
     SumModelGini(solution, submission) / SumModelGini(solution, solution)
 }
 
+expandVar <- function(var) {
+    l <- levels(var)
+    if (is.null(l)) var else 
+        if (length(l) >2 ) sapply(var, function(c) {as.numeric(charToRaw(as.character(c)))-65})  
+    else as.numeric(var)-1
+}
 
 nrounds <- 15000
 nfold <- 5 
@@ -31,18 +37,15 @@ cov_and_res  = subset(train_data,select=-c(Id))
 trainSet <- cov_and_res
 y_train<-trainSet$Hazard
 X_train<-trainSet[,-1]
-dummies <- dummyVars(~ ., data = X_train, fullRank=TRUE)
-X_train_exp <- as.matrix(predict(dummies, newdata = X_train))
+#dummies <- dummyVars(~ ., data = X_train, fullRank=TRUE)
+#X_train_exp <- as.matrix(predict(dummies, newdata = X_train))
+X_train_exp <- as.matrix(sapply(X_train,expandVar))
+
+
+
 storage.mode(X_train_exp) <- "double"
 trainData <- xgb.DMatrix(X_train_exp, label = y_train)
 #commandArgs
-#commandArgs
-test_data <- read.csv('data/test.csv')
-X_test<-subset(test_data,select=-c(Id))
-X_test_exp <- as.matrix(predict(dummies, newdata = X_test))
-storage.mode(X_train_exp) <- "double"
-testData <- xgb.DMatrix(X_test_exp)
-
 evalerror <- function(preds, dtrain) {
     labels <- getinfo(dtrain, "label")
     err <- NormalizedGini(labels, preds)
