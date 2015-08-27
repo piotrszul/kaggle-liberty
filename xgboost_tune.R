@@ -52,27 +52,27 @@ evalerror <- function(preds, dtrain) {
 trainModels <-function(seed) {
     set.seed(seed)
     folds <- createFolds(train_data$Hazard,k=nfold, list=TRUE, returnTrain=FALSE)
-    taskParams <- data.frame(max.depth=9,eta=0.005, subsample=0.7,colsample_bytree=0.7,min_child_weight=6,gamma=0)
+    #taskParams <- data.frame(max.depth=9,eta=0.005, subsample=0.7,colsample_bytree=0.7,min_child_weight=6,gamma=0)
+    #taskParams <- data.frame(max.depth=8,eta=0.005, subsample=0.7,colsample_bytree=0.6,min_child_weight=10,gamma=0)
+    #taskParams <- data.frame(max.depth=5,eta=0.005, subsample=0.7,colsample_bytree=0.6,min_child_weight=0,gamma=0)
+    taskParams <- data.frame(max.depth=10, eta=0.005, subsample=0.8, colsample_bytree=0.65, min_child_weight=40, gamma=1)
     print("Running task")
     print(taskParams)
 
     techParams <- list(objective = "reg:linear")
 
     params <- c(taskParams, techParams)
-    cv_gini <-xgb.cv(params = params, data = trainData,nrounds = nrounds, folds = folds, prediction = TRUE, 
-            early.stop.round = 120,  maximize = TRUE, nthread=16, eval_metric=evalerror)
-    min_nrounds_gini <- which.max(as.numeric(cv_gini$dt$test.xxxx.mean))
-    gini_gini <-sapply(folds,function(f){NormalizedGini(y_train[f], cv_gini$pred[f])})
-
+    #cv_gini <-xgb.cv(params = params, data = trainData,nrounds = nrounds, folds = folds, prediction = TRUE, 
+    #        early.stop.round = 120,  maximize = TRUE, nthread=16, eval_metric=evalerror)
+    #min_nrounds_gini <- which.max(as.numeric(cv_gini$dt$test.xxxx.mean))
+    #gini_gini <-sapply(folds,function(f){NormalizedGini(y_train[f], cv_gini$pred[f])})
+    set.seed(100)
     cv_rmse <-xgb.cv(params = params, data = trainData,nrounds = nrounds, folds = folds, prediction = TRUE, 
-            early.stop.round = 120,  maximize = FALSE, nthread=16, eval_metric='rmse')
+            early.stop.round = 120,  maximize = FALSE, nthread=16, eval_metric='rmse', print.every.n=100)
     min_nrounds_rmse <- which.min(as.numeric(cv_rmse$dt$test.rmse.mean))
     gini_rmse <-sapply(folds,function(f){NormalizedGini(y_train[f], cv_rmse$pred[f])})
     
-    res <- data.frame(gini.round = min_nrounds_gini,
-               gini.fold.mean = mean(gini_gini), 
-               gini.fold.sd = sd(gini_gini),
-               gini.total = NormalizedGini(y_train, cv_gini$pred),
+    res <- data.frame(
                rmse.round = min_nrounds_rmse,
                rmse.fold.mean = mean(gini_rmse),
                rmse.fold.sd = sd(gini_rmse),
@@ -83,7 +83,7 @@ trainModels <-function(seed) {
 }
 
 set.seed(37)
-seeds <- sample(100,10,replace=FALSE)
+seeds <- sample(100,20,replace=FALSE)
 result <- do.call('rbind',lapply(seeds, trainModels))
 print(result)
 summary(result)
